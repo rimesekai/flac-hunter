@@ -27,32 +27,43 @@ def norm_dur(raw) -> "float | None":
     return v / 1000.0 if v > 2000 else v
 
 
-def tier_of(cand: dict, sdur, want_name: str, aliases, name_aliases) -> "str | None":
+def tier_of(
+    cand: dict,
+    sdur,
+    want_name: str,
+    aliases,
+    name_aliases,
+    *,
+    search_win: float = SEARCH_WIN,
+    b_high: float = B_HIGH,
+) -> "str | None":
     """A=±8s 且歌手相关且歌名相关（唯一允许写入档）；B=±8s 但歌手/歌名不符；
     C=8~15s 且歌名相似；C2=无时长且歌名相关且歌名相似。B/C/C2 仅作疑似线索，不写入（防硬凑）。
-    （hunt_last3.py:186-197 逻辑逐行转录，仅统一字段适配。）"""
+    当 sdur 为 None 或 <=0 时不作时长差 0.0 假定，改按歌手与歌名相关性判 A/B/None。"""
     cand_name = cand.get("title") or ""
     cand_artist = "/".join(cand.get("artists") or [])
     cand_dur = cand.get("duration")
     name_ok = name_related(cand_name, name_aliases)
     if cand_dur is None:
         return "C2" if (name_ok and name_similar(cand_name, want_name)) else None
-    if sdur is None:
-        sdur = 0.0
+    if sdur is None or sdur <= 0:
+        if artist_related(cand_artist, aliases) and name_ok:
+            return "A"
+        return "B" if name_ok else None
     d = abs(cand_dur - sdur)
-    if d <= SEARCH_WIN:
+    if d <= search_win:
         return "A" if (artist_related(cand_artist, aliases) and name_ok) else "B"
-    if d <= B_HIGH and name_similar(cand_name, want_name):
+    if d <= b_high and name_similar(cand_name, want_name):
         return "C"
     return None
 
 
 def tier_sort_key(cand: dict, tier, sdur=None) -> tuple:
     """候选排序键：档序 A<B<C<C2，同档按 |duration−sdur| 升序；tier 为 None 排最后，
-    同档内时长未知排最后。sdur 可选（秒）：调用方便于传入时给准，缺省时长差按未知处理。"""
+    同档内时长未知排最后。sdur 可选（秒）：调用方便于传入时给准，缺省或<=0 时长差按未知处理。"""
     rank = _TIER_ORDER.get(tier, len(_TIER_ORDER))
     dur = cand.get("duration")
-    if dur is None or sdur is None:
+    if dur is None or sdur is None or sdur <= 0:
         diff = float("inf")
     else:
         diff = abs(dur - sdur)

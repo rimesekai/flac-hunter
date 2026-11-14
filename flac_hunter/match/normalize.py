@@ -157,14 +157,42 @@ def sanitize(s: str) -> str:
     return s.strip().rstrip(".")
 
 
-def _artist_alias_match(artist: str, entry_artist: str) -> bool:
+def cfg_alias_groups(cfg) -> "list[set[str]]":
+    """合并内置 ARTIST_ALIAS_GROUPS 与 cfg.aliases.art_aliases（兼容 Config dataclass、dict 与 None）。"""
+    groups = [set(g) for g in ARTIST_ALIAS_GROUPS]
+    if cfg is None:
+        return groups
+    aliases = cfg.get("aliases") if isinstance(cfg, dict) else getattr(cfg, "aliases", None)
+    if aliases is None:
+        return groups
+    raw = aliases.get("art_aliases") if isinstance(aliases, dict) else getattr(aliases, "art_aliases", None)
+    if isinstance(raw, dict):
+        for k, vs in raw.items():
+            items = [k]
+            if isinstance(vs, (list, tuple, set)):
+                items.extend(vs)
+            elif vs:
+                items.append(vs)
+            clean = {str(x).strip() for x in items if x is not None and str(x).strip()}
+            if clean:
+                groups.append(clean)
+    elif isinstance(raw, (list, tuple, set)):
+        for g in raw:
+            if isinstance(g, (list, tuple, set)):
+                clean = {str(x).strip() for x in g if x is not None and str(x).strip()}
+                if clean:
+                    groups.append(clean)
+    return groups
+
+
+def _artist_alias_match(artist: str, entry_artist: str, alias_groups=None) -> bool:
     """条目艺人与目标艺人相关：变体并集相交，或双向 artist_related。"""
-    va = artist_variants(artist)
-    ve = artist_variants(entry_artist)
+    va = artist_variants(artist, alias_groups=alias_groups)
+    ve = artist_variants(entry_artist, alias_groups=alias_groups)
     return bool(va & ve) or artist_related(entry_artist, va) or artist_related(artist, ve)
 
 
-def alt_titles_for(title: str, artist: str, alt_entries) -> list:
+def alt_titles_for(title: str, artist: str, alt_entries, alias_groups=None) -> list:
     """按 config [aliases] alt_titles 条目取别名表（download_bili.py:51-69 ALT_TITLES 的 config 化）。
 
     条目命中条件：norm_text(title) 与条目 title 归一相等（或互为 name_similar），
@@ -177,7 +205,7 @@ def alt_titles_for(title: str, artist: str, alt_entries) -> list:
         if not nt or not et or not (nt == et or name_similar(nt, et)):
             continue
         ea = (e.get("artist") or "").strip()
-        if ea and not _artist_alias_match(artist, ea):
+        if ea and not _artist_alias_match(artist, ea, alias_groups=alias_groups):
             continue
         out.extend(e.get("alts") or [])
     return out

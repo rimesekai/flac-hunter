@@ -39,14 +39,28 @@ GD_MIN_INTERVAL = 1.05  # 防限流，硬要求
 _gd_last_hit = [0.0]
 
 
-def gd_throttle(now: Optional[float] = None) -> None:
-    """所有 GD API 调用前保证间隔 >=1.05 秒（hunt_last3.py:104-109 逐行转录，防限流硬要求）。"""
+def gd_throttle(now: Optional[float] = None, min_interval: float = GD_MIN_INTERVAL) -> None:
+    """所有 GD API 调用前保证间隔 >= min_interval（默认 1.05 秒，防限流硬要求）。"""
+    interval = GD_MIN_INTERVAL if min_interval is None else float(min_interval)
     if now is None:
         now = time.time()
     gap = now - _gd_last_hit[0]
-    if gap < GD_MIN_INTERVAL:
-        time.sleep(GD_MIN_INTERVAL - gap)
+    if gap < interval:
+        time.sleep(interval - gap)
     _gd_last_hit[0] = time.time()
+
+
+def _cfg_rate(cfg: Any, attr: str, default: float) -> float:
+    """从 Config dataclass 或 dict 读取 rate.<attr>，缺失或非法回退 default。"""
+    if cfg is None:
+        return default
+    rate = cfg.get("rate") if isinstance(cfg, dict) else getattr(cfg, "rate", None)
+    if rate is None:
+        return default
+    val = rate.get(attr) if isinstance(rate, dict) else getattr(rate, attr, None)
+    if isinstance(val, (int, float)) and not isinstance(val, bool) and val >= 0:
+        return float(val)
+    return default
 
 
 def build_search_url(source: str, name: str, count: int = 8) -> str:
@@ -126,13 +140,17 @@ class GdStudioSource:
     name = "gdstudio"
     lossless = True
 
-    def __init__(self, cfg: Optional[dict] = None, http_fn: Optional[Callable] = None):
-        self.cfg = cfg or {}
+    def __init__(self, cfg: Any = None, http_fn: Optional[Callable] = None):
+        self.cfg = cfg if cfg is not None else {}
         self._http_fn = http_fn  # 可注入假 http 供离线测试
+        self._min_interval = _cfg_rate(cfg, "gd_min_interval", GD_MIN_INTERVAL)
+        self.last_throttle_calls = 0
 
     def _get(self, url: str, timeout: int = 30) -> str:
         if self._http_fn is not None:
             return self._http_fn(url, timeout)
+        gd_throttle(min_interval=self._min_interval)
+        self.last_throttle_calls += 1
         return http_get(url, ua=CHROME_UA, timeout=timeout)
 
     def search(self, track: dict) -> list:

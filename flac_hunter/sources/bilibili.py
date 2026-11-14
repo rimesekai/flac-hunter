@@ -94,9 +94,10 @@ def get_buvid3(http_fn: Optional[Callable] = None) -> Optional[str]:
     try:
         fn = http_fn or _default_http
         d = json.loads(fn(BILI_FINGER_SPI, 10))
-        _buvid_cache[0] = str(d["data"]["b_3"])
+        val = d["data"]["b_3"]
+        _buvid_cache[0] = str(val) if val else ""
     except Exception:
-        _buvid_cache[0] = "0"  # 蓝本哨兵：失败缓存，避免重复打 finger 接口
+        _buvid_cache[0] = ""  # 失败缓存空串，避免重复打 finger 接口且返回 None
     return _buvid_cache[0] or None
 
 
@@ -194,7 +195,7 @@ def parse_fav_payload(payload: Any) -> tuple:
             artist = artist or upper
         if re.search(r"翻唱|covered|cover", title, re.I) and not re.search(r"翻唱|cover", name, re.I):
             name += "（翻唱）"
-        artists = [a.strip() for a in re.split(r"[,，/、&_]", artist) if a.strip()] if artist else []
+        artists = [a.strip() for a in re.split(r" _ |[,，/、&]", artist) if a.strip()] if artist else []
         try:
             duration_ms = int(float(m.get("duration") or 0) * 1000) or None
         except (TypeError, ValueError):
@@ -269,19 +270,60 @@ class BilibiliSource:
             pass
         return []
 
+    def _min_video_score(self) -> float:
+        cfg = self.cfg
+        m = cfg.get("match") if isinstance(cfg, dict) else getattr(cfg, "match", None)
+        if m is not None:
+            v = m.get("min_video_score") if isinstance(m, dict) else getattr(m, "min_video_score", None)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return float(v)
+        return 55.0
+
     def search(self, track: dict) -> list:
         """三段式搜索合并候选（蓝本 download_bili.py:384-403）：
         首搜 -> ALT 别名逐个重搜合并 -> 纯艺人名搜 3 页。
+        真实请求间轻休眠 0.35s；按 score_bili 达标时提前结束后续查询计划。
         """
+        try:
+            from ..match.normalize import alt_titles_for, cfg_alias_groups
+            from ..match.score import bili_low_confidence, score_bili
+        except Exception:
+            alt_titles_for = None
+            cfg_alias_groups = None
+            bili_low_confidence = None
+            score_bili = None
+
+        alias_groups = cfg_alias_groups(self.cfg) if cfg_alias_groups is not None else None
+        alt_entries = self._alt_entries()
+
         plan = None
         if _match_plan is not None:
             try:
-                plan = _match_plan(track, self._alt_entries())
+                plan = _match_plan(track, alt_entries, alias_groups=alias_groups)
+            except TypeError:
+                try:
+                    plan = _match_plan(track, alt_entries)
+                except Exception:
+                    plan = None
             except Exception:
                 plan = None
         if not plan:
             plan = default_plan(track)
+
+        score_track = track if "name" in track else {**track, "name": track.get("title") or ""}
+        alts = []
+        if alt_titles_for is not None:
+            artists = score_track.get("artists") or []
+            artist0 = str(artists[0]) if artists else ""
+            try:
+                alts = alt_titles_for(str(score_track.get("name") or ""), artist0,
+                                      alt_entries, alias_groups=alias_groups)
+            except Exception:
+                alts = []
+        min_sc = self._min_video_score()
+
         pool: dict = {}
+        req_count = 0
         for item in plan:
             if isinstance(item, (tuple, list)):
                 query = str(item[0])
@@ -289,8 +331,21 @@ class BilibiliSource:
             else:
                 query, pages = str(item), 1
             for page in range(1, max(1, pages) + 1):
+                if req_count > 0 and self._http_fn is None:
+                    time.sleep(0.35)
+                req_count += 1
                 for c in self._search_once(query, page):
                     pool.setdefault(c["id"], c)
+                if score_bili is not None and pool:
+                    for c in pool.values():
+                        try:
+                            sc = score_bili(score_track, c, alts=alts, alias_groups=alias_groups)
+                            low = (bili_low_confidence(sc, c, score_track)
+                                   if bili_low_confidence is not None else (sc < min_sc))
+                            if sc >= min_sc and not low:
+                                return list(pool.values())
+                        except Exception:
+                            continue
         return list(pool.values())
 
     def fetch(self, cand: dict, dest_dir: str) -> Optional[str]:

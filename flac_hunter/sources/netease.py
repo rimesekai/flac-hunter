@@ -7,16 +7,31 @@ upgrade_ogg.py:188-196（player/url 匿名 128k）、verify_kaisei.py:61-63（so
 from __future__ import annotations
 
 import json
+import time
 import urllib.parse
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 from ..util import CHROME_UA, download_stream, guess_ext_from_url, http_get
 from .base import make_candidate
-from .gdstudio import norm_dur
+from .gdstudio import _cfg_rate, norm_dur
 
 NETEASE_BASE = "https://music.163.com"
 NETEASE_REFERER = "https://music.163.com/"
+NETEASE_MIN_INTERVAL = 0.5
+
+_netease_last_hit = [0.0]
+
+
+def netease_throttle(now: Optional[float] = None, min_interval: float = NETEASE_MIN_INTERVAL) -> None:
+    """网易云 API 调用前保证最小间隔（默认 0.5 秒）。"""
+    interval = NETEASE_MIN_INTERVAL if min_interval is None else float(min_interval)
+    if now is None:
+        now = time.time()
+    gap = now - _netease_last_hit[0]
+    if gap < interval:
+        time.sleep(interval - gap)
+    _netease_last_hit[0] = time.time()
 
 
 def build_search_url(keyword: str, type: int = 1, limit: int = 30) -> str:
@@ -185,7 +200,7 @@ def parse_playlist_payload(payload: Any) -> list:
 
 def fetch_playlist(playlist_id, timeout: int = 20) -> list:
     """匿名拉取公开歌单曲目（music.163.com/api/playlist/detail?id=）；失败返回 []。"""
-    url = NETEASE_BASE + f"/api/playlist/detail?id={playlist_id}"
+    url = NETEASE_BASE + "/api/playlist/detail?" + urllib.parse.urlencode({"id": playlist_id})
     try:
         raw = http_get(url, ua=CHROME_UA, referer=NETEASE_REFERER, timeout=timeout)
         return parse_playlist_payload(raw)
@@ -199,13 +214,17 @@ class NeteaseSource:
     name = "netease"
     lossless = False
 
-    def __init__(self, cfg: Optional[dict] = None, http_fn: Optional[Callable] = None):
-        self.cfg = cfg or {}
+    def __init__(self, cfg: Any = None, http_fn: Optional[Callable] = None):
+        self.cfg = cfg if cfg is not None else {}
         self._http_fn = http_fn  # 可注入假 http 供离线测试
+        self._min_interval = _cfg_rate(cfg, "netease_min_interval", NETEASE_MIN_INTERVAL)
+        self.last_throttle_calls = 0
 
     def _get(self, url: str, timeout: int = 20) -> str:
         if self._http_fn is not None:
             return self._http_fn(url, timeout)
+        netease_throttle(min_interval=self._min_interval)
+        self.last_throttle_calls += 1
         return _default_http(url, timeout)
 
     def search(self, track: dict) -> list:

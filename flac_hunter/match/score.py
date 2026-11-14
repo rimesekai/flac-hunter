@@ -9,6 +9,7 @@ ext/url/extra）；蓝本参考实现的 name/artist/dur/channel/play 字段在�
 """
 import math
 import re
+import unicodedata
 
 from .blacklist import BILI_BAD, EDGE_WORDS, has_bad_version
 from .normalize import (
@@ -19,6 +20,7 @@ from .normalize import (
     norm_bili,
     norm_text,
     romaji_fold,
+    t2s,
 )
 
 # 与 config [aliases] no_picks 一致的永拒视频（download_bili.py:84-86）
@@ -42,18 +44,43 @@ def _cand_play(cand: dict) -> int:
         return 0
 
 
-def score_bili(track: dict, cand: dict, alts=None, other_artists=None) -> float:
+def _bili_bad_hit(text: str, w: str) -> bool:
+    """BILI_BAD 词命中判定：纯 ASCII 词用词边界匹配，避免误杀 alive/discover/table 等正常词。"""
+    if re.fullmatch(r"[a-z0-9 -]+", w):
+        return re.search(r"(?<![a-z0-9])" + re.escape(w) + r"(?![a-z0-9])", text) is not None
+    return w in text
+
+
+def _space_bili(s: str) -> str:
+    """保留词边界的 B 站文本归一（繁转简 + NFKC + lower，非词字符折叠为空格）。"""
+    s = unicodedata.normalize("NFKC", t2s(s or "")).lower()
+    return re.sub(r"[^0-9a-z\u3040-\u30ff\u3400-\u9fff]+", " ", s)
+
+
+def _other_artist_hit(space_title: str, loose_title: str, channel: str, o: str) -> bool:
+    """其他艺人撞车判定：≤4 字符 ASCII 走词边界保护，避免 jin/rim 误伤正常标题。"""
+    if not o:
+        return False
+    if len(o) <= 4 and o.isascii():
+        return contains_variant(space_title, o) or contains_variant(channel, o)
+    return contains_variant(space_title, o) or contains_variant(loose_title, o) or contains_variant(channel, o)
+
+
+def score_bili(track: dict, cand: dict, alts=None, other_artists=None, *, alias_groups=None) -> float:
     """B站候选打分（逐行转录 download_bili.py:225-303，适配统一候选字段）。
 
     track：prepare 产出曲目 dict（name/artists/duration_ms/album）。
     other_artists：调用方传入的「已归一化歌单艺人变体集合」（playlist_artists 语义，
     artist_variants 展开并集且已剔虚拟歌手与当前 track 自身变体），本函数直接使用、
-    不再归一（蓝本 download_bili.py:267-269 直接 o in loose_title）。
+    不再归一。
+    alias_groups：可选艺人别名组（传入时透传给 artist_variants）。
     返回浮点分值（蓝本实现即为浮点累加）。
     """
     if cand.get("id") in NO_PICKS:
         return -999
-    names = [norm_bili(track["name"])] + [norm_bili(a) for a in (alts or [])]
+    track_name = track.get("name") or ""
+    artists = track.get("artists") or []
+    names = [norm_bili(track_name)] + [norm_bili(a) for a in (alts or [])]
     title = norm_bili(cand.get("title"))
     channel = norm_bili(_cand_channel(cand))
     sdur = (track.get("duration_ms") or 0) / 1000
@@ -61,9 +88,11 @@ def score_bili(track: dict, cand: dict, alts=None, other_artists=None) -> float:
     s = 0.0
 
     raw = (cand.get("title") or "").lower()
-    sn = track["name"].lower()
+    sn = track_name.lower()
     for w in BILI_BAD:
-        if w in raw and w not in sn:
+        if _bili_bad_hit(raw, w) and not _bili_bad_hit(sn, w):
+            if "翻唱" in sn and w in ("cover", "covered", "cover by", "covered by"):
+                continue
             return -999
 
     title_score = 0.0
@@ -84,8 +113,9 @@ def score_bili(track: dict, cand: dict, alts=None, other_artists=None) -> float:
             title_score, matched_name = local, name
     s += title_score
 
-    variants = artist_variants(track["artists"][0]) if track["artists"] else set()
+    variants = artist_variants(artists[0], alias_groups=alias_groups) if artists else set()
     loose_title = loose_bili(cand.get("title"))
+    space_title = _space_bili(cand.get("title"))
     artist_in_title = any(loose_bili(v) in loose_title for v in variants)
     artist_in_channel = any(contains_variant(channel, v) for v in variants)
     if artist_in_title:
@@ -93,7 +123,7 @@ def score_bili(track: dict, cand: dict, alts=None, other_artists=None) -> float:
     if artist_in_channel:
         s += 30
     others = other_artists or set()
-    if any(o in loose_title or o in channel for o in others):
+    if any(_other_artist_hit(space_title, loose_title, channel, o) for o in others):
         s -= 60
     if not (artist_in_title or artist_in_channel):
         cjk = re.search(r"[\u3040-\u30ff\u3400-\u9fff]", matched_name)
@@ -102,7 +132,7 @@ def score_bili(track: dict, cand: dict, alts=None, other_artists=None) -> float:
         if not distinctive and len(matched_name.split()) <= 2:
             s -= 20
     # 点赞曲明确是 cover 时，候选必须出现覆盖艺人（download_bili.py:276-278）
-    if "cover" in (track["name"] + " " + (track.get("album") or "")).lower() and not (artist_in_title or artist_in_channel):
+    if "cover" in (track_name + " " + (track.get("album") or "")).lower() and not (artist_in_title or artist_in_channel):
         return -999
     if re.search(r"official|官方|公式", channel):
         s += 10
@@ -139,10 +169,11 @@ def bili_low_confidence(score: float, cand: dict, track: dict) -> bool:
     return bool(score < 55 or (sdur and diff > 60))
 
 
-def score_youtube(cand: dict, track: dict) -> float:
+def score_youtube(cand: dict, track: dict, *, alias_groups=None) -> float:
     """YouTube 候选打分（逐行转录 download.py:119-179，适配统一候选字段；注意参数序为 cand, track）。"""
-    name = norm_text(track["name"])
-    artist = norm_text(track["artists"][0]) if track["artists"] else ""
+    track_name = track.get("name") or ""
+    artists = track.get("artists") or []
+    name = norm_text(track_name)
     raw_title = cand.get("title") or ""
     title = norm_text(raw_title)
     channel = norm_text(cand.get("channel") or (cand.get("extra") or {}).get("author")
@@ -151,7 +182,7 @@ def score_youtube(cand: dict, track: dict) -> float:
     sdur = (track.get("duration_ms") or 0) / 1000
     s = 0.0
 
-    if has_bad_version(raw_title, track["name"]):
+    if has_bad_version(raw_title, track_name):
         return -999
 
     if name and name in title:
@@ -165,7 +196,7 @@ def score_youtube(cand: dict, track: dict) -> float:
     if n2 and n2 in t2:
         s = max(s, 45)
 
-    variants = artist_variants(track["artists"][0]) if track["artists"] else set()
+    variants = artist_variants(artists[0], alias_groups=alias_groups) if artists else set()
     if any(contains_variant(title, v) for v in variants):
         s += 18
     channel_tokens = set(channel.split())
@@ -178,7 +209,7 @@ def score_youtube(cand: dict, track: dict) -> float:
         s += 15
     if re.search(r"가사|lyrics?|歌詞|歌词|lyric", raw_title, re.I) or re.search(r"가사|lyrics?|歌詞|歌词|lyric", channel):
         s -= 15
-    for a in track["artists"][1:3]:
+    for a in artists[1:3]:
         if norm_text(a) in title:
             s += 4
 
@@ -222,7 +253,7 @@ def pick_best(cands, track: dict, score_fn):
     return scored[0][1]
 
 
-def plan_search_queries(track: dict, alt_entries):
+def plan_search_queries(track: dict, alt_entries, *, alias_groups=None):
     """三段式查询计划（转录 download_bili.py:384-403 的查询展开，只产出计划不执行搜索）。
 
     首搜「艺人 歌名」→ alt_titles_for 取别名，每个别名出「艺人 别名」与裸别名两条 →
@@ -235,7 +266,7 @@ def plan_search_queries(track: dict, alt_entries):
     name = track.get("name") or ""
     if artist0 and name:
         queries.append((f"{artist0} {name}", 1))
-    alts = alt_titles_for(name, artist0, alt_entries or [])
+    alts = alt_titles_for(name, artist0, alt_entries or [], alias_groups=alias_groups)
     for a in alts:
         if artist0:
             queries.append((f"{artist0} {a}", 1))

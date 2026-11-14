@@ -119,7 +119,8 @@ def search_lyrics(artist: str, title: str, duration_s: Optional[float] = None,
     best, bestd = None, None
     try:
         for q in queries:
-            time.sleep(min_interval)
+            if http_fn is None and min_interval and min_interval > 0:
+                time.sleep(min_interval)
             url = LRCLIB_API + "?" + urllib.parse.urlencode({"q": q})
             try:
                 arr = json.loads(fn(url, 20))
