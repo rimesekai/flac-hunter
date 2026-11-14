@@ -1,0 +1,6 @@
+# flac-hunter 依赖
+# 核心功能全部使用 Python 标准库（>=3.11），本文件仅列可选依赖。
+
+# musicdl —— 长尾音源聚合适配（可选，不装则对应源优雅降级为空结果）
+# 许可：PolyForm Noncommercial 1.0.0（仅限非商业用途，私有自用）
+musicdl

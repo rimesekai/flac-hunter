@@ -1,0 +1,62 @@
+# flac-hunter 配置示例
+# 用法：拷贝本文件为 config.toml（config.toml 被 .gitignore 挡住不入库），再按需修改。
+# 所有字段均可省略，省略时取下方注释中的默认值。
+
+# ---------- [paths] 路径配置 ----------
+[paths]
+# 曲库根目录（音乐文件落位处）。相对路径相对运行目录；Windows 路径建议用单引号字面量。
+# 默认 "music"
+music = 'D:\path\to\Music'
+# 下载暂存目录：先落 staging，验证通过后再移入曲库。默认 "staging"
+staging = 'D:\some\staging'
+# spotify_cli.exe 完整路径（prepare 拉 Spotify 歌单元数据用）。留空则不可用。默认 ""
+spotify_cli = 'C:\Users\you\AppData\Roaming\Spotify\spotify_cli.exe'
+
+# ---------- [rate] 限速配置（单位：秒） ----------
+[rate]
+# GDStudio 接口强制最小请求间隔（模块级限速器）。默认 1.05
+gd_min_interval = 1.05
+# 每曲处理完后的附加休眠基准（实际按 0.8-1.8 倍随机）。默认 1.0
+per_track_sleep = 1.0
+# LRCLIB 歌词查询最小间隔。默认 0.5
+lrclib_min_interval = 0.5
+# 网易云请求最小间隔。默认 0.5
+netease_min_interval = 0.5
+
+# ---------- [match] 匹配配置 ----------
+[match]
+# 搜索/分档时长窗：|候选时长 - track时长| ≤ search_win 才算 A 档。默认 8.0
+search_win = 8.0
+# 下载后验证时长窗：|ffprobe 时长 - duration_ms/1000| ≤ verify_win 才算通过。默认 15.0
+verify_win = 15.0
+# B站视频候选最低分，低于该值判 low_confidence。默认 55
+min_video_score = 55
+
+# ---------- [aliases] 别名配置 ----------
+# 注意 TOML 语法：本表的直接键值必须写在下面两个子块之前，
+# 因为 [aliases.art_aliases] 与 [[aliases.alt_titles]] 一旦出现，
+# 后续裸键值就归入那些子块了。
+
+# 内置默认虚拟歌手表（match.blacklist.VIRTUAL_SINGERS）之外的补充项。默认 []
+virtual_singers = []
+
+# 人工指定候选：曲目名含以下子串时强制选用（优先级最高）。默认 []
+manual_picks = []
+
+# 否决名单：候选标题含以下子串时直接排除（如不想要的 B 站 BV 号）。默认 []
+no_picks = []
+
+# 永久跳过：文件名含以下子串的曲目/文件一律跳过（优先级最高）。默认 []
+permanent_skip = []
+
+# 艺人别名组：键=主名（小写罗马字），值=别名数组。按组展开为变体并集参与匹配。
+# 占位示例，真实写法（每组一行）：example_artist = ["示例别名"]（键为主名，值为日文/中文别名）
+[aliases.art_aliases]
+example_artist = ["示例别名"]
+
+# 曲名别名：title=歌单里的曲名，artist=主艺人，alts=等价曲名数组（用于搜索与打分）。
+# 每条占一个块，示例：
+[[aliases.alt_titles]]
+title = "Example Title"
+artist = "Example Artist"
+alts = ["示例曲名"]

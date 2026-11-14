@@ -1,0 +1,19 @@
+# 个人真实配置（含本机路径与个人名单），不入库
+config.toml
+
+# 运行产物
+tasks/
+
+# 下载暂存目录
+.staging/
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 日志
+*.log
+
+# swarm 协作面板（本机）
+.swarm/
+musicdl_outputs/
