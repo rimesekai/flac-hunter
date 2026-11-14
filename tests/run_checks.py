@@ -216,8 +216,9 @@ def t_t2s():
 # ---------- f) alt_titles_for + config 校验 ----------
 
 
-@check("f.alt_titles_for 别名命中 + config.toml 14/13 条")
+@check("f.alt_titles_for 别名命中 + config.load_config 临时 TOML")
 def t_alt_titles():
+    from flac_hunter.config import load_config
     from flac_hunter.match.normalize import alt_titles_for
 
     forms = [
@@ -238,17 +239,39 @@ def t_alt_titles():
         last = r
     assert ok, f"alt_titles_for 未返回 ['快晴']: {last!r}"
 
-    cfg_path = REPO / "config.toml"
-    if cfg_path.exists():  # 存在时才校验个人表规模
-        import tomllib
+    tmp = Path(tempfile.mkdtemp(prefix="fhchk_cfg_"))
+    try:
+        toml_path = tmp / "config.toml"
+        toml_path.write_text(
+            '[paths]\nmusic = "my_music"\nstaging = "my_staging"\n\n'
+            '[rate]\ngd_min_interval = 1.25\nper_track_sleep = 0.2\n\n'
+            '[match]\nsearch_win = 10.0\nverify_win = 18.0\nmin_video_score = 60.0\n\n'
+            '[aliases]\nvirtual_singers = ["TestVocal"]\n'
+            'manual_picks = ["BV1test12345"]\n'
+            'no_picks = ["BV1bad123456"]\n'
+            'permanent_skip = ["SkipMe"]\n'
+            'art_aliases = { "ArtistA" = ["AliasA", "A2"] }\n'
+            'alt_titles = [{ title = "Good Weather", artist = "Orangestar", alts = ["快晴"] }]\n',
+            encoding="utf-8",
+        )
+        cfg = load_config(toml_path)
+        assert cfg.paths.music == "my_music", cfg.paths
+        assert cfg.rate.gd_min_interval == 1.25, cfg.rate
+        assert cfg.match.search_win == 10.0 and cfg.match.verify_win == 18.0, cfg.match
+        assert cfg.aliases.art_aliases == {"ArtistA": ["AliasA", "A2"]}, cfg.aliases.art_aliases
+        assert len(cfg.aliases.alt_titles) == 1 and cfg.aliases.alt_titles[0]["alts"] == ["快晴"], cfg.aliases.alt_titles
+        assert cfg.aliases.manual_picks == ["BV1test12345"], cfg.aliases.manual_picks
+        assert cfg.aliases.no_picks == ["BV1bad123456"], cfg.aliases.no_picks
+        assert cfg.aliases.permanent_skip == ["SkipMe"], cfg.aliases.permanent_skip
 
-        with open(cfg_path, "rb") as fh:
-            cfg = tomllib.load(fh)
-        al = cfg.get("aliases") or {}
-        art = al.get("art_aliases") or []
-        alt = al.get("alt_titles") or []
-        assert len(art) == 14, f"art_aliases={len(art)}"
-        assert len(alt) == 13, f"alt_titles={len(alt)}"
+        bad_path = tmp / "broken.toml"
+        bad_path.write_text("not valid = [toml", encoding="utf-8")
+        cfg_bad = load_config(bad_path)
+        assert cfg_bad.paths.music == "music" and cfg_bad.match.verify_win == 15.0
+        cfg_missing = load_config(tmp / "nonexistent.toml")
+        assert cfg_missing.rate.gd_min_interval == 1.05
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ---------- g) is_cover_like ----------
@@ -578,15 +601,25 @@ def t_find_dups():
 # ---------- u) build_durations_cache ----------
 
 
-@check("u.build_durations_cache 条目时长 ≈5.0")
+@check("u.build_durations_cache 条目时长 ≈5.0（临时目录隔离）")
 def t_durations_cache():
+    from flac_hunter import library as _lib
     from flac_hunter.library import build_durations_cache
 
     tmp = Path(tempfile.mkdtemp(prefix="fhchk_dur_"))
+    orig_tasks_dir = _lib.TASKS_DIR
     try:
+        _lib.TASKS_DIR = tmp / "tasks"
         _make_sine_flac(tmp / "Cache - Item.flac", 5)
-        res = _call_adapted(build_durations_cache, music_dir=str(tmp),
-                            music=str(tmp), path=str(tmp))
+        cache_file = tmp / "local_durations.json"
+        res = _call_adapted(
+            build_durations_cache,
+            music_dir=str(tmp),
+            music=str(tmp),
+            path=str(tmp),
+            cfg={"tasks_dir": str(tmp)},
+            cache_path=str(cache_file),
+        )
         if isinstance(res, tuple) and res and isinstance(res[0], dict):
             res = res[0]
         assert isinstance(res, dict), type(res)
@@ -599,7 +632,9 @@ def t_durations_cache():
         if isinstance(entry, (list, tuple)):
             entry = entry[0]
         assert abs(float(entry) - 5.0) < 0.5, f"duration={entry!r}"
+        assert cache_file.exists(), "未写入临时目录 local_durations.json"
     finally:
+        _lib.TASKS_DIR = orig_tasks_dir
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -781,6 +816,550 @@ def check_y_playlist_ingest():
         assert out == [] and dt < 3.0, f"超时兜底失效: dt={dt:.1f}s out={out!r}"
     finally:
         musicdl_ext.AVAILABLE, musicdl_ext.MusicClient = orig_available, orig_client
+
+
+# ---------- z1-z7. 修复验证与端到端离线回归 ----------
+
+
+@check("z1.LibraryIndex.scan + dedupe_track 三层查重 + Config 别名生效 [依赖 library-audit]")
+def check_z1_library_index_dedupe():
+    from flac_hunter import library as _lib
+    from flac_hunter.config import Aliases, Config, Paths
+    from flac_hunter.library import LibraryIndex
+
+    tmp = Path(tempfile.mkdtemp(prefix="fhchk_z1_"))
+    orig_tasks_dir = _lib.TASKS_DIR
+    try:
+        _lib.TASKS_DIR = tmp / "tasks"
+        music = tmp / "music"
+        music.mkdir()
+        _make_sine_flac(music / "SongA - Alpha.flac", 5)
+        _make_sine_flac(music / "SongB - Other (cover).flac", 5)
+        _make_sine_flac(music / "SongC - AliasOne.flac", 5)
+        _make_sine_flac(music / "SongD - 花譜.flac", 5)
+
+        cfg = Config(
+            paths=Paths(music=str(music), staging=str(tmp / "staging")),
+            aliases=Aliases(art_aliases={"AliasOne": ["AliasTwo"]}),
+        )
+        idx = LibraryIndex(music, cfg)
+        assert idx.by_file == {}, "LibraryIndex.__init__ 不应隐式扫描目录"
+        idx.scan()
+        assert "SongA - Alpha.flac" in idx.by_file, idx.by_file
+        assert idx.by_file["SongA - Alpha.flac"]["path"] == str(music / "SongA - Alpha.flac")
+
+        # ① 艺人层直接命中
+        entry, reason = idx.dedupe_track({"name": "SongA", "artists": ["Alpha"], "duration_ms": 5000})
+        assert reason == "artist" and entry and entry["path"] == str(music / "SongA - Alpha.flac"), (entry, reason)
+
+        # ① Config.aliases.art_aliases 别名命中（依赖 library-audit 对 Config dataclass 适配）
+        entry_cfg, reason_cfg = idx.dedupe_track({"name": "SongC", "artists": ["AliasTwo"], "duration_ms": 99000})
+        assert reason_cfg == "artist" and entry_cfg and entry_cfg["file"] == "SongC - AliasOne.flac", (entry_cfg, reason_cfg)
+
+        # ① 内置 14 组 ARTIST_ALIAS_GROUPS 命中（依赖 library-audit 合并内置别名组）
+        entry_bi, reason_bi = idx.dedupe_track({"name": "SongD", "artists": ["KAF"], "duration_ms": 99000})
+        assert reason_bi == "artist" and entry_bi and entry_bi["file"] == "SongD - 花譜.flac", (entry_bi, reason_bi)
+
+        # ② 标题+时长层命中
+        entry_d, reason_d = idx.dedupe_track({"name": "SongA", "artists": ["SomeoneElse"], "duration_ms": 5000})
+        assert reason_d == "duration" and entry_d and entry_d["file"] == "SongA - Alpha.flac", (entry_d, reason_d)
+
+        # ③ cover 类文件不按时长判重，落入 same_title_other
+        entry_c, reason_c = idx.dedupe_track({"name": "SongB", "artists": ["SomeoneElse"], "duration_ms": 5000})
+        assert reason_c == "same_title_other" and entry_c is None, (entry_c, reason_c)
+
+        # 新曲目
+        entry_n, reason_n = idx.dedupe_track({"name": "BrandNewSong", "artists": ["Nobody"], "duration_ms": 5000})
+        assert reason_n == "new" and entry_n is None, (entry_n, reason_n)
+    finally:
+        _lib.TASKS_DIR = orig_tasks_dir
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@check("z2.cli._audit_concl 四项门严检 + cmd_audit 透传 dur_tol + cmd_dedupe 格式化")
+def check_z2_cli_audit_dedupe():
+    import argparse
+    import cli as _cli
+    from flac_hunter import audit as _audit
+    from flac_hunter import config as _cfg
+    from flac_hunter.config import Config, MatchCfg, Paths
+
+    # 四项门任意一项为假或 issues 非空都必须 FAIL
+    assert _cli._audit_concl({"dur_ok": True, "tags_ok": True, "jpg_ok": True, "flac_ok": True, "issues": []}) == "PASS"
+    for bad_key in ("dur_ok", "tags_ok", "jpg_ok", "flac_ok"):
+        r = {"dur_ok": True, "tags_ok": True, "jpg_ok": True, "flac_ok": True, "issues": []}
+        r[bad_key] = False
+        concl = _cli._audit_concl(r)
+        assert "FAIL" in concl.upper(), f"{bad_key}=False 未判 FAIL: {concl}"
+    concl_iss = _cli._audit_concl({"dur_ok": True, "tags_ok": True, "jpg_ok": True, "flac_ok": True, "issues": ["缺标签"]})
+    assert "FAIL" in concl_iss.upper(), f"issues 非空未判 FAIL: {concl_iss}"
+
+    # real audit_one 缺封面必须 FAIL
+    tmp = Path(tempfile.mkdtemp(prefix="fhchk_z2_"))
+    orig_load_config = _cfg.load_config
+    orig_audit_one = _audit.audit_one
+    try:
+        music = tmp / "music"
+        music.mkdir()
+        f_nocover = music / "NoCover - Tester.flac"
+        _make_sine_flac(f_nocover, 5)
+        r_real = _call_adapted(_audit.audit_one, path=str(f_nocover), duration_ms=5000)
+        assert "FAIL" in _cli._audit_concl(r_real).upper(), f"缺封面+缺标签真实文件未判 FAIL: {r_real}"
+
+        # cmd_audit：若 audit_one 支持 dur_tol，透传 cfg.match.verify_win
+        seen_kwargs = []
+
+        def fake_audit_one(path, duration_ms=None, *, dur_tol=15.0):
+            seen_kwargs.append({"path": path, "dur_tol": dur_tol})
+            return {"dur_ok": True, "tags_ok": True, "jpg_ok": True, "flac_ok": True, "issues": []}
+
+        _cfg.load_config = lambda path=None: Config(
+            paths=Paths(music=str(music), staging=str(tmp / "staging")),
+            match=MatchCfg(verify_win=23.5),
+        )
+        _audit.audit_one = fake_audit_one
+        _cli.cmd_audit(argparse.Namespace())
+        assert len(seen_kwargs) == 1 and seen_kwargs[0]["dur_tol"] == 23.5, seen_kwargs
+
+        # cmd_dedupe：members dict 格式化为可读文本，不直接 str(dict)
+        groups = list(_cli._iter_groups([
+            {"title_key": "song", "artist_key": "tester",
+             "members": [{"file": "Song - Tester.flac", "duration": 12.34, "bit_rate": 850000}]}
+        ]))
+        line = groups[0][0]
+        assert "Song - Tester.flac" in line and "{" not in line and "12.3s" in line and "850kbps" in line, line
+    finally:
+        _cfg.load_config = orig_load_config
+        _audit.audit_one = orig_audit_one
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@check("z3.cli.prepare 显式 scan + existing_file 全路径 + 无歌手无尾部横杠 + spotify type")
+def check_z3_cli_prepare():
+    import argparse
+    import cli as _cli
+    from flac_hunter import config as _cfg
+    from flac_hunter import library as _lib
+    from flac_hunter import spotify_cli as _sp
+    from flac_hunter.config import Config, Paths
+
+    tmp = Path(tempfile.mkdtemp(prefix="fhchk_z3_"))
+    orig_load_config = _cfg.load_config
+    orig_tasks_dir = _lib.TASKS_DIR
+    orig_sp_cls = _sp.SpotifyCli
+    try:
+        _lib.TASKS_DIR = tmp / "tasks"
+        music = tmp / "music"
+        music.mkdir()
+        existing_path = music / "SongA - Alpha.flac"
+        _make_sine_flac(existing_path, 5)
+        _cfg.load_config = lambda path=None: Config(
+            paths=Paths(music=str(music), staging=str(tmp / "staging")),
+        )
+
+        # --list 入口：空歌手不拼尾部 " - " + scan 查重命中 existing_file 为全路径
+        list_file = tmp / "list.txt"
+        list_file.write_text("SoloNoArtist\nSongA - Alpha | 5\n", encoding="utf-8")
+        out_list = tmp / "tracks_list.json"
+        _cli.cmd_prepare(argparse.Namespace(uri=None, list_file=str(list_file), out=str(out_list)))
+        recs = json.loads(out_list.read_text(encoding="utf-8"))
+        assert len(recs) == 2, recs
+        assert recs[0]["filename_stem"] == "SoloNoArtist", f"空歌手不应带尾部横杠: {recs[0]['filename_stem']!r}"
+        assert recs[1]["existing"] is True and recs[1]["dedupe_reason"] == "artist", recs[1]
+        assert recs[1]["existing_file"] == str(existing_path), f"existing_file 应为完整路径: {recs[1]!r}"
+
+        # spotify: 入口：type 必须为 "spotify"，空歌手无尾部横杠
+        class _FakeSpotifyCli:
+            def __init__(self, *a, **k):
+                pass
+
+            def playlist_get(self, uri):
+                return {
+                    "name": "TestPL",
+                    "track_count": 2,
+                    "tracks": [
+                        {"uri": "spotify:track:1", "name": "NoArtistTrack", "artists": [], "album": {"name": "Alb1"}},
+                        {"uri": "spotify:track:2", "name": "SongA", "artists": [{"name": "Alpha"}], "album": {"name": "Alb2"}},
+                    ],
+                }
+
+            def lookup_durations(self, uris):
+                return {"spotify:track:1": {"duration_ms": 180000, "image_url": "http://img/1.jpg"}}
+
+        _sp.SpotifyCli = _FakeSpotifyCli
+        out_sp = tmp / "tracks_sp.json"
+        _cli.cmd_prepare(argparse.Namespace(uri="spotify:playlist:123", list_file=None, out=str(out_sp)))
+        recs_sp = json.loads(out_sp.read_text(encoding="utf-8"))
+        assert len(recs_sp) == 2, recs_sp
+        assert all(r["type"] == "spotify" for r in recs_sp), recs_sp
+        assert recs_sp[0]["filename_stem"] == "NoArtistTrack", recs_sp[0]
+        assert recs_sp[0]["duration_ms"] == 180000, recs_sp[0]
+        assert recs_sp[1]["existing"] is True and recs_sp[1]["existing_file"] == str(existing_path), recs_sp[1]
+    finally:
+        _cfg.load_config = orig_load_config
+        _lib.TASKS_DIR = orig_tasks_dir
+        _sp.SpotifyCli = orig_sp_cls
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@check("z4.find_dups 同键异时长不丢文件 + 损坏非空文件不崩溃 [依赖 library-audit]")
+def check_z4_find_dups_edge():
+    from flac_hunter import library as _lib
+    from flac_hunter.library import find_dups
+
+    tmp = Path(tempfile.mkdtemp(prefix="fhchk_z4_"))
+    orig_probe_meta = _lib.probe_meta
+    try:
+        # 四文件同一 (norm_title_dups="same", artist_key="singer")，两对不同时长(3s vs 10s)
+        _make_sine_flac(tmp / "Same - Singer.flac", 3)
+        _make_sine_flac(tmp / "Same (feat. A) - Singer.flac", 3)
+        _make_sine_flac(tmp / "Same (feat. B) - Singer.flac", 10)
+        _make_sine_flac(tmp / "Same (feat. C) - Singer.flac", 10)
+        # 损坏非空文件（且模拟 probe_meta 抛错）不应导致 find_dups 崩溃
+        (tmp / "Corrupt - Singer.flac").write_bytes(b"NOT_A_VALID_FLAC_STREAM" * 64)
+
+        def _probe_with_corrupt(path, *a, **k):
+            if "Corrupt" in str(path):
+                raise RuntimeError("corrupt audio stream")
+            return orig_probe_meta(path, *a, **k)
+
+        _lib.probe_meta = _probe_with_corrupt
+        res = _call_adapted(find_dups, music_dir=str(tmp), music=str(tmp), path=str(tmp), print_fn=None)
+        groups = [g for g in _uni_list(res) if len(g) > 1]
+        has_3s = any(any("Same - Singer.flac" in m for m in g) and any("feat. A" in m for m in g) for g in groups)
+        has_10s = any(any("feat. B" in m for m in g) and any("feat. C" in m for m in g) for g in groups)
+        assert has_3s and has_10s, f"同键异时长聚类丢失组: {groups!r}"
+    finally:
+        _lib.probe_meta = orig_probe_meta
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _make_large_jpg(path):
+    """生成 >5KB 的有效测试封面 JPG（供 _fetch_cover 大小门限与 remux 内嵌）。"""
+    _run_ff([
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "testsrc=s=640x640:rate=1",
+        "-frames:v", "1", str(path),
+    ])
+
+
+def _make_noise_flac(path, seconds=22.0):
+    """生成 >20s 且体积 >100KB 的有效测试 FLAC。"""
+    _run_ff([
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", f"anoisesrc=duration={seconds}",
+        "-c:a", "flac", str(path),
+    ])
+
+
+def _make_mp3_320(path, seconds=22.0):
+    """生成 >20s 的 320kbps 测试 MP3。"""
+    _run_ff([
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
+        "-c:a", "libmp3lame", "-b:a", "320k", str(path),
+    ])
+
+
+def _make_ogg_128(path, seconds=22.0):
+    """生成 >20s 的 ~128kbps 测试 OGG。"""
+    _run_ff([
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", f"anoisesrc=duration={seconds}",
+        "-c:a", "libvorbis", "-b:a", "128k", str(path),
+    ])
+
+
+@check("z5.run_download 离线端到端（假源+tasks_dir+sidecars+封面清理+落位顺序） [依赖 pipeline-upgrade]")
+def check_z5_run_download_e2e():
+    from flac_hunter import pipeline as _pl
+    from flac_hunter import util as _util
+    from flac_hunter.config import Config, Paths, Rate
+    from flac_hunter.sources.base import make_candidate
+
+    tmp = Path(tempfile.mkdtemp(prefix="fhchk_z5_"))
+    orig_tasks_dir = _pl._TASKS_DIR
+    orig_http_get = _util.http_get
+    orig_place_file = _pl._place_file
+    try:
+        music = tmp / "music"
+        staging = tmp / "staging"
+        tasks = tmp / "tasks"
+        assets = tmp / "assets"
+        music.mkdir()
+        staging.mkdir()
+        assets.mkdir()
+
+        src_flac = assets / "sample22.flac"
+        cover_jpg = assets / "cover.jpg"
+        _make_noise_flac(src_flac, 22.0)
+        _make_large_jpg(cover_jpg)
+        jpg_bytes = cover_jpg.read_bytes()
+        assert len(jpg_bytes) > 5000, len(jpg_bytes)
+
+        _util.http_get = lambda url, *a, **k: jpg_bytes
+
+        class _FakeSrc:
+            name = "musicdl"
+            lossless = True
+
+            def search(self, track):
+                return [make_candidate(
+                    source="musicdl", id="fake1", title=track["name"],
+                    artists=track["artists"], duration=22.0, ext=".flac",
+                    url="", extra={"quality": "flac"},
+                )]
+
+            def fetch(self, cand, dest_dir):
+                dst = Path(dest_dir) / f"{cand['id']}.flac"
+                shutil.copyfile(src_flac, dst)
+                return str(dst)
+
+        cfg = Config(
+            paths=Paths(music=str(music), staging=str(staging)),
+            rate=Rate(per_track_sleep=0.01),
+        )
+        dl_params = inspect.signature(_pl.run_download).parameters
+        assert "tasks_dir" in dl_params, "run_download 缺少 tasks_dir 可选参数"
+
+        track1 = {
+            "type": "spotify",
+            "uri": "spotify:track:cov1",
+            "name": "TrackOne",
+            "artists": ["Tester"],
+            "album": "Alb",
+            "duration_ms": 22000,
+            "image_url": "https://i.scdn.co/image/ab67616d00001e0212345678",
+        }
+        res = _pl.run_download(
+            [track1], cfg, sources=[_FakeSrc()], sidecars=True,
+            lyrics_fetcher=lambda *a: "[00:01.00]hello offline\n",
+            tasks_dir=tasks,
+        )
+        assert len(res) == 1 and res[0]["status"] == "downloaded", res
+        assert (music / "TrackOne - Tester.flac").exists()
+        assert (music / "TrackOne - Tester.jpg").exists()
+        assert (music / "TrackOne - Tester.lrc").exists()
+        assert (tasks / "results.jsonl").exists()
+        assert not list(staging.glob("*.jpg")), f"staging 临时封面未清理: {list(staging.glob('*.jpg'))}"
+
+        # 落位失败时：不得留孤儿侧车(.jpg/.lrc)，且 staging 封面仍须清理
+        def _boom_place(*a, **k):
+            raise RuntimeError("simulated place failure")
+
+        _pl._place_file = _boom_place
+        track2 = {
+            "type": "spotify",
+            "uri": "spotify:track:cov2",
+            "name": "TrackTwo",
+            "artists": ["Tester"],
+            "album": "Alb",
+            "duration_ms": 22000,
+            "image_url": "https://i.scdn.co/image/ab67616d00001e02abcdef00",
+        }
+        res2 = _pl.run_download(
+            [track2], cfg, sources=[_FakeSrc()], sidecars=True,
+            lyrics_fetcher=lambda *a: "[00:01.00]orphan check\n",
+            tasks_dir=tasks,
+        )
+        assert len(res2) == 1 and res2[0]["status"] == "failed", res2
+        assert not (music / "TrackTwo - Tester.jpg").exists(), "落位失败不应留下孤儿 .jpg"
+        assert not (music / "TrackTwo - Tester.lrc").exists(), "落位失败不应留下孤儿 .lrc"
+        assert not list(staging.glob("*.jpg")), f"落位失败后 staging 封面未清理: {list(staging.glob('*.jpg'))}"
+    finally:
+        _pl._TASKS_DIR = orig_tasks_dir
+        _util.http_get = orig_http_get
+        _pl._place_file = orig_place_file
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@check("z6.run_upgrade 离线测试（bps->kbps better 判定 + 无时长终验不误删） [依赖 pipeline-upgrade]")
+def check_z6_run_upgrade_offline():
+    from flac_hunter import upgrade as _upg
+    from flac_hunter import util as _util
+    from flac_hunter.config import Config, Paths, Rate
+
+    tmp = Path(tempfile.mkdtemp(prefix="fhchk_z6_"))
+    orig_match_fails = _upg.MATCH_FAILS
+    orig_search = _upg._netease_search
+    orig_url = _upg._gd_url_for
+    orig_dl_stream = _util.download_stream
+    orig_probe_meta = _upg._probe_meta
+    try:
+        music = tmp / "music"
+        staging = tmp / "staging"
+        assets = tmp / "assets"
+        music.mkdir()
+        staging.mkdir()
+        assets.mkdir()
+
+        ogg_file = music / "SongOgg - Artist.ogg"
+        mp3_320 = assets / "high320.mp3"
+        flac_22 = assets / "lossless22.flac"
+        _make_ogg_128(ogg_file, 22.0)
+        _make_mp3_320(mp3_320, 22.0)
+        _make_noise_flac(flac_22, 22.0)
+
+        # 1) _probe_meta 返回码率必须已是 kbps（< 1000），而非 bps（~128000）
+        dur0, in_br0, _, _ = _upg._probe_meta(str(ogg_file))
+        assert dur0 > 20.0 and 0 < in_br0 < 1000, f"_probe_meta 码率单位未转 kbps: dur={dur0}, br={in_br0}"
+        assert _upg.better(False, 320, in_br0) is True, f"better(False, 320, {in_br0}) 应为 True"
+
+        cfg = Config(
+            paths=Paths(music=str(music), staging=str(staging)),
+            rate=Rate(netease_min_interval=0.0, per_track_sleep=0.0),
+        )
+        mf_path = tmp / "match_fails.json"
+
+        def fake_search(*a, **k):
+            return [{"id": "101", "name": "SongOgg", "dur": 22.0, "artists": "Artist"}]
+
+        def fake_url_mp3(*a, **k):
+            return "http://offline.local/high320.mp3", 320
+
+        def fake_dl_mp3(url, dst, *a, **k):
+            Path(dst).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(mp3_320, dst)
+            return Path(dst).stat().st_size
+
+        _util.download_stream = fake_dl_mp3
+        upg_params = inspect.signature(_upg.run_upgrade).parameters
+        kw_ogg = {"ext": "ogg", "full_retry": True}
+        if "match_fails_path" in upg_params:
+            kw_ogg["match_fails_path"] = mf_path
+        else:
+            _upg.MATCH_FAILS = mf_path
+        if "search_fn" in upg_params:
+            kw_ogg["search_fn"] = fake_search
+        else:
+            _upg._netease_search = fake_search
+        if "url_fn" in upg_params:
+            kw_ogg["url_fn"] = fake_url_mp3
+        else:
+            _upg._gd_url_for = fake_url_mp3
+
+        res_ogg = _upg.run_upgrade(cfg, **kw_ogg)
+        rec_ogg = [r for r in res_ogg if r.get("file") == "SongOgg - Artist.ogg"]
+        assert rec_ogg and rec_ogg[0]["status"] == "upgraded", res_ogg
+        assert (music / "SongOgg - Artist.mp3").exists() and not ogg_file.exists()
+
+        # 2) 无时长旧文件（sdur == 0.0）升级 FLAC 终验不得误判 final_duration_mismatch
+        music2 = tmp / "music2"
+        music2.mkdir()
+        mp3_old = music2 / "NoDur - Artist.mp3"
+        _make_mp3_320(mp3_old, 22.0)
+
+        _upg._probe_meta = lambda *a, **k: (0.0, 128, "NoDur", "Artist")
+        _util.download_stream = lambda url, dst, *a, **k: (
+            Path(dst).parent.mkdir(parents=True, exist_ok=True),
+            shutil.copyfile(flac_22, dst),
+            Path(dst).stat().st_size,
+        )[-1]
+
+        def fake_search2(*a, **k):
+            return [{"id": "202", "name": "NoDur", "dur": 22.0, "artists": "Artist"}]
+
+        def fake_url_flac(*a, **k):
+            return "http://offline.local/lossless.flac", 999999
+
+        cfg2 = Config(
+            paths=Paths(music=str(music2), staging=str(staging)),
+            rate=Rate(netease_min_interval=0.0, per_track_sleep=0.0),
+        )
+        kw_mp3 = {"ext": "mp3", "full_retry": True}
+        if "match_fails_path" in upg_params:
+            kw_mp3["match_fails_path"] = mf_path
+        if "search_fn" in upg_params:
+            kw_mp3["search_fn"] = fake_search2
+        else:
+            _upg._netease_search = fake_search2
+        if "url_fn" in upg_params:
+            kw_mp3["url_fn"] = fake_url_flac
+        else:
+            _upg._gd_url_for = fake_url_flac
+
+        res_mp3 = _upg.run_upgrade(cfg2, **kw_mp3)
+        rec_mp3 = [r for r in res_mp3 if r.get("file") == "NoDur - Artist.mp3"]
+        assert rec_mp3 and rec_mp3[0]["status"] == "upgraded", f"sdur==0.0 终验异常: {res_mp3}"
+        assert (music2 / "NoDur - Artist.flac").exists() and not mp3_old.exists()
+    finally:
+        _upg.MATCH_FAILS = orig_match_fails
+        _upg._netease_search = orig_search
+        _upg._gd_url_for = orig_url
+        _util.download_stream = orig_dl_stream
+        _upg._probe_meta = orig_probe_meta
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@check("z7.tier_of 无时长sdur=None返A + score_bili Alive不误杀 + GdStudioSource限速 [依赖 matcher-sources]")
+def check_z7_matcher_sources_fixes():
+    from flac_hunter.config import Config, Rate
+    from flac_hunter.match.score import score_bili
+    from flac_hunter.match.tier import tier_of
+    from flac_hunter.sources import gdstudio as _gd
+
+    # 1) tier_of: sdur=None / 0 不再把 sdur 当 0.0 与 cand_dur 比较
+    cand_a = {
+        "source": "gdstudio", "id": "1", "title": "Song",
+        "artists": ["Artist"], "duration": 203.0, "ext": None, "url": "", "extra": {},
+    }
+    assert tier_of(cand_a, None, "Song", ["artist"], ["song"]) == "A", tier_of(cand_a, None, "Song", ["artist"], ["song"])
+    assert tier_of(cand_a, 0, "Song", ["artist"], ["song"]) == "A"
+    cand_b = dict(cand_a, artists=["Other"])
+    assert tier_of(cand_b, None, "Song", ["artist"], ["song"]) == "B"
+
+    # 2) score_bili: "Alive"/"Discover"/"Table" 不触发 BILI_BAD 词边界误杀；真 "live" 仍 -999
+    track = {"name": "Song", "artists": ["Orangestar"], "album": "", "duration_ms": 200000}
+    for good_title in ("Song (Alive ver)", "Song (Discover)", "Song on Table"):
+        c_good = {
+            "source": "bili", "id": "BV1good", "title": good_title,
+            "artists": ["Orangestar"], "duration": 200, "ext": None, "url": "",
+            "extra": {"channel": "Orangestar", "play": 10000},
+            "channel": "Orangestar", "play": 10000,
+        }
+        sc = score_bili(track, c_good, [], set())
+        assert sc > 0, f"{good_title!r} 被误杀: score={sc}"
+    c_live = {
+        "source": "bili", "id": "BV1live", "title": "Song (live)",
+        "artists": ["Orangestar"], "duration": 200, "ext": None, "url": "",
+        "extra": {"channel": "Orangestar", "play": 10000},
+        "channel": "Orangestar", "play": 10000,
+    }
+    assert score_bili(track, c_live, [], set()) == -999
+
+    # 3) GdStudioSource._get(http_fn=None) 必须调用 gd_throttle 遵守 >=1.05s 限速
+    orig_http_get = _gd.http_get
+    orig_throttle = _gd.gd_throttle
+    orig_sleep = _gd.time.sleep
+    orig_last_hit = _gd._gd_last_hit[0]
+    try:
+        throttle_calls = []
+        sleeps = []
+
+        def fake_http_get(url, *a, **k):
+            if "types=url" in url:
+                return '{"url":"http://offline.local/1.flac","size":12345}'
+            return "[]"
+
+        def spy_throttle(*a, **k):
+            throttle_calls.append((a, k))
+            return orig_throttle(*a, **k)
+
+        _gd.http_get = fake_http_get
+        _gd.gd_throttle = spy_throttle
+        _gd.time.sleep = lambda sec: sleeps.append(sec)
+        _gd._gd_last_hit[0] = time.time()
+
+        src = _gd.GdStudioSource(Config(rate=Rate(gd_min_interval=1.05)), http_fn=None)
+        src.search({"name": "Song", "artists": ["Artist"]})
+        src.get_url("netease", "123")
+        assert len(throttle_calls) >= 4, f"GdStudioSource 未触发 gd_throttle: calls={len(throttle_calls)}"
+        assert any(s >= 1.0 for s in sleeps), f"GdStudioSource 限速休眠未生效: sleeps={sleeps}"
+    finally:
+        _gd.http_get = orig_http_get
+        _gd.gd_throttle = orig_throttle
+        _gd.time.sleep = orig_sleep
+        _gd._gd_last_hit[0] = orig_last_hit
 
 
 # ---------- 主流程 ----------
