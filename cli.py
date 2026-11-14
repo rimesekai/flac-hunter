@@ -212,6 +212,7 @@ def cmd_prepare(args):
             parse_lookup_json,
         )
 
+        kind = "spotify"
         cli = SpotifyCli(cfg.paths.spotify_cli)
         raw_raw = cli.playlist_get(uri)  # 已解析 dict（parse_playlist_json）
         raw = _jsonify(raw_raw)
@@ -276,7 +277,9 @@ def cmd_prepare(args):
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    index = LibraryIndex(cfg.paths.music)
+    index = LibraryIndex(cfg.paths.music, cfg)
+    if Path(cfg.paths.music).is_dir():
+        index.scan()
     records = []
     for i, t in enumerate(tracks, 1):
         artists = list(t.get("artists") or [])
@@ -290,9 +293,11 @@ def cmd_prepare(args):
             "duration_ms": t.get("duration_ms"),
             "image_url": t.get("image_url"),
         }
-        rec["filename_stem"] = "{0} - {1}".format(
-            sanitize(rec["name"] or ""),
-            " _ ".join(sanitize(a) for a in artists),
+        name_clean = sanitize(rec["name"] or "")
+        artist_parts = [sanitize(a) for a in artists if str(a).strip()]
+        artist_parts = [a for a in artist_parts if a]
+        rec["filename_stem"] = (
+            f"{name_clean} - {' _ '.join(artist_parts)}" if artist_parts else name_clean
         )
         rec["existing"] = False
         rec["existing_file"] = None
@@ -308,7 +313,7 @@ def cmd_prepare(args):
         elif isinstance(res, dict):  # 未来可能的 dict 形态
             entry, reason = res.get("existing_file"), res.get("dedupe_reason")
         if isinstance(entry, dict):
-            entry = entry.get("file")
+            entry = entry.get("path") or entry.get("file")
         if reason in ("artist", "duration") and entry:
             rec["existing"] = True
             rec["existing_file"] = entry
@@ -368,12 +373,19 @@ def cmd_upgrade(args):
 
 
 def _audit_concl(r):
-    """把 audit_one 的返回归一成结论字符串。"""
+    """把 audit_one 的返回归一成结论字符串（四项质量门全为真且 issues 为空才算 PASS）。"""
     if isinstance(r, dict):
-        ok = r.get("flac_ok", r.get("ok"))
-        if ok in (True, "PASS", "pass", "真FLAC"):
+        gates = ("dur_ok", "tags_ok", "jpg_ok", "flac_ok")
+        issues = r.get("issues") or []
+
+        def _gate_ok(v):
+            return v is True or (isinstance(v, str) and v.lower() in ("pass", "真flac"))
+
+        failed_gates = [k for k in gates if not _gate_ok(r.get(k))]
+        if not failed_gates and not issues:
             return "PASS"
-        return f"FAIL({r})"
+        detail = ", ".join(map(str, issues)) if issues else ", ".join(failed_gates)
+        return f"FAIL({detail})"
     if isinstance(r, tuple) and r:
         return str(r[0])
     return str(r)
@@ -400,6 +412,8 @@ def cmd_audit(args):
         if name in params:
             kwargs[name] = None  # 无期望时长来源，时长门交由调用方配置
             break
+    if "dur_tol" in params:
+        kwargs["dur_tol"] = cfg.match.verify_win
     passed = failed = 0
     fail_lines = []
     for f in files:
@@ -423,6 +437,24 @@ def cmd_audit(args):
         _log(f"  {line}")
 
 
+def _format_dedupe_member(m) -> str:
+    """将 find_dups 成员（dict/tuple/str）格式化为可读文本。"""
+    if isinstance(m, dict):
+        name = m.get("file") or m.get("path") or m.get("filename") or "?"
+        parts = []
+        dur = m.get("duration")
+        if isinstance(dur, (int, float)) and not isinstance(dur, bool):
+            parts.append(f"{dur:.1f}s")
+        br = m.get("bit_rate")
+        if isinstance(br, (int, float)) and not isinstance(br, bool) and br > 0:
+            kbps = round(br / 1000) if br >= 10000 else round(br)
+            parts.append(f"{kbps}kbps")
+        return f"{name} ({', '.join(parts)})" if parts else str(name)
+    if isinstance(m, (list, tuple)) and m:
+        return str(m[0])
+    return str(m)
+
+
 def _iter_groups(res):
     """find_dups 返回值归一成成员列表的迭代。"""
     if isinstance(res, dict):
@@ -438,7 +470,7 @@ def _iter_groups(res):
             members = g
         else:
             members = [g]
-        yield [str(m[0]) if isinstance(m, (list, tuple)) and m else str(m) for m in members]
+        yield [_format_dedupe_member(m) for m in members]
 
 
 def cmd_dedupe(args):

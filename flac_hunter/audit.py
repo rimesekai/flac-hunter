@@ -99,9 +99,8 @@ def classify_rename(stem: str, title: str = "", artist: str = "") -> tuple[list[
         issues.append("inverted")
 
     # artist 段尾部垃圾（_hires / .hires）
-    artist_part = " - ".join(parts[1:])
-    a_stripped = re.sub(r"[\s._-]*[Hh]i-?[Rr]es\s*$", "", artist_part).strip()
-    junk_in_artist = a_stripped != artist_part.strip()
+    a_stripped = re.sub(r"[\s._-]*[Hh]i-?[Rr]es\s*$", "", rest).strip(" -–_.")
+    junk_in_artist = a_stripped != rest
     if junk_in_artist:
         issues.append("artist_junk")
 
@@ -113,10 +112,16 @@ def classify_rename(stem: str, title: str = "", artist: str = "") -> tuple[list[
     if issues == ["junk"]:
         return issues, _sanitize(stripped)
     if issues == ["artist_junk"]:
-        return issues, _sanitize(f"{p1} - {a_stripped}")
+        if p1 and a_stripped:
+            return issues, _sanitize(f"{p1} - {a_stripped}")
+        return issues, _sanitize(p1 or a_stripped)
     # 混合情形：标签可用则优先按标签重建
     if title and artist:
         return issues, f"{_sanitize(title)} - {_sanitize(artist)}"
+    if "artist_junk" in issues:
+        if p1 and a_stripped:
+            return issues, _sanitize(f"{p1} - {a_stripped}")
+        return issues, _sanitize(p1 or a_stripped)
     return issues, _sanitize(stripped)
 
 
@@ -179,26 +184,50 @@ def apply_rename(cfg, plans: list[dict]) -> list[dict]:
     """执行重命名：无损 retag_copy 写标签 → 改名 → sidecar(.jpg/.lrc) 同步改名。
 
     目标 stem 已存在则跳过不动；retag 失败跳过该文件（rename_apply.py:44-81 语义）。
+    同 stem 多扩展名（如 .flac 与 .mp3）或计划列表含重复 old stem 时，不互相误跳、不重复报错。
     cfg 仅用于取曲库目录。返回逐条执行记录。
     """
     from . import ffmpeg
 
-    music_dir = Path(getattr(cfg.paths, "music", "music"))
+    if isinstance(cfg, dict):
+        music_dir = Path((cfg.get("paths") or {}).get("music") or cfg.get("music") or "music")
+    else:
+        paths = getattr(cfg, "paths", None)
+        music_dir = Path(getattr(paths, "music", "music") if paths is not None else "music")
     records: list[dict] = []
     existing_stems = {p.stem for p in music_dir.iterdir()
                       if p.is_file() and p.suffix.lower() in AUDIO_EXT}
+    claimed_new: dict[str, str] = {}
+    renamed_olds: set[str] = set()
+    seen_plans: set[tuple[str, str, str]] = set()
 
     for plan in plans or []:
         old, new = plan.get("old") or "", plan.get("new") or plan.get("proposal") or ""
+        file_hint = str(plan.get("file") or "").strip()
+        plan_key = (old, new, Path(file_hint).name if file_hint else "")
+        if plan_key in seen_plans:
+            continue
+        seen_plans.add(plan_key)
+
         if not old or not new or old == new:
             records.append({"old": old, "new": new, "status": "skip", "detail": "空计划或同名"})
             continue
-        srcs = [q for q in music_dir.iterdir()
-                if q.is_file() and q.stem == old and q.suffix.lower() in AUDIO_EXT]
+
+        if file_hint:
+            cand = music_dir / Path(file_hint).name
+            srcs = [cand] if (cand.is_file() and cand.stem == old and cand.suffix.lower() in AUDIO_EXT) else []
+        else:
+            srcs = sorted(
+                [q for q in music_dir.iterdir()
+                 if q.is_file() and q.stem == old and q.suffix.lower() in AUDIO_EXT],
+                key=lambda q: q.name,
+            )
         if not srcs:
+            if old in renamed_olds:
+                continue
             records.append({"old": old, "new": new, "status": "skip", "detail": "missing"})
             continue
-        if new in existing_stems:
+        if new in existing_stems and claimed_new.get(new) != old:
             records.append({"old": old, "new": new, "status": "skip", "detail": "name exists"})
             continue
         title = str(plan.get("title") or "").strip()
@@ -206,13 +235,16 @@ def apply_rename(cfg, plans: list[dict]) -> list[dict]:
         done_any = False
         failed = ""
         for q in srcs:
+            target = q.with_name(f"{new}{q.suffix}")
+            if target.exists():
+                records.append({"old": old, "new": new, "status": "skip", "detail": "name exists"})
+                continue
             try:
                 if title and artist:
                     ffmpeg.retag_copy(str(q), title=title, artist=artist)  # .tagtmp + os.replace，失败抛错
             except Exception as e:
                 failed = str(e)[:200]
                 break
-            target = q.with_name(f"{new}{q.suffix}")
             os.replace(str(q), str(target))
             for ext in (".jpg", ".lrc"):
                 side = q.with_name(f"{old}{ext}")
@@ -220,12 +252,17 @@ def apply_rename(cfg, plans: list[dict]) -> list[dict]:
                     t2 = q.with_name(f"{new}{ext}")
                     if not t2.exists():
                         os.replace(str(side), str(t2))
-            existing_stems.discard(old)
+            claimed_new[new] = old
             existing_stems.add(new)
+            renamed_olds.add(old)
             records.append({"old": old, "new": new, "status": "renamed",
                             "detail": f"{q.name} -> {target.name}"})
             done_any = True
-        if not done_any and failed:
+        if done_any:
+            if not any(q.is_file() and q.stem == old and q.suffix.lower() in AUDIO_EXT
+                       for q in music_dir.iterdir()):
+                existing_stems.discard(old)
+        elif failed:
             records.append({"old": old, "new": new, "status": "failed", "detail": failed})
     return records
 
@@ -240,10 +277,10 @@ def _tag_get(tags, key: str):
     return None
 
 
-def audit_one(path: str | Path, duration_ms=None) -> dict:
+def audit_one(path: str | Path, duration_ms=None, *, dur_tol: float = DUR_TOL) -> dict:
     """对单个 FLAC 做四项质量门（audit_group_b.py:90-135）。
 
-    ① |ffprobe dur − duration_ms/1000| ≤ 15s → dur_ok
+    ① |ffprobe dur − duration_ms/1000| ≤ dur_tol（默认 15s）→ dur_ok
     ② format.tags title/artist 非空 → tags_ok
     ③ 同名 .jpg 存在 → jpg_ok
     ④ 真 FLAC：stream codec_name=='flac' 且 format_name 含 flac → flac_ok
@@ -274,7 +311,7 @@ def audit_one(path: str | Path, duration_ms=None) -> dict:
         try:
             dur = float(fmt.get("duration"))
             diff = dur - float(duration_ms) / 1000.0
-            if abs(diff) > DUR_TOL:
+            if abs(diff) > dur_tol:
                 dur_ok = False
                 issues.append(f"时长差{diff:+.1f}s")
         except (TypeError, ValueError):
@@ -305,16 +342,35 @@ def audit_one(path: str | Path, duration_ms=None) -> dict:
             "flac_ok": flac_ok, "issues": issues}
 
 
+def _verify_win(cfg) -> float:
+    """从 Config dataclass 或 dict 读取 match.verify_win，缺省回退 DUR_TOL。"""
+    val = None
+    if isinstance(cfg, dict):
+        m = cfg.get("match")
+        if isinstance(m, dict):
+            val = m.get("verify_win")
+    elif cfg is not None:
+        m = getattr(cfg, "match", None)
+        if isinstance(m, dict):
+            val = m.get("verify_win")
+        elif m is not None:
+            val = getattr(m, "verify_win", None)
+    if isinstance(val, (int, float)) and not isinstance(val, bool) and val >= 0:
+        return float(val)
+    return DUR_TOL
+
+
 def audit_dir(music_dir: str | Path, cfg=None) -> list[dict]:
     """四项质量门扫全库（audit cli 默认动作）：对每个 .flac 跑 audit_one。"""
     root = Path(music_dir)
     out: list[dict] = []
     if not root.is_dir():
         return out
+    dur_tol = _verify_win(cfg)
     for f in sorted(os.listdir(root)):
         if Path(f).suffix.lower() != ".flac":
             continue
-        out.append(audit_one(root / f))
+        out.append(audit_one(root / f, dur_tol=dur_tol))
     return out
 
 

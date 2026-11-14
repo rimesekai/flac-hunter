@@ -56,10 +56,62 @@ def nt_in_nc(target: str, cand: str) -> bool:
     return nt in nc
 
 
-def artist_ok(target_artists, cand_artists_str: str) -> bool:
-    """目标任一歌手出现在候选歌手串接中（upgrade_original.py:119-121）。"""
+def artist_ok(target_artists, cand_artists_str: str, alias_groups=None) -> bool:
+    """目标任一歌手出现在候选歌手串接中（大小写不敏感 + 别名变体展开）。"""
+    from .match.normalize import artist_variants, contains_variant, norm_text
+
     credited = cand_artists_str or ""
-    return any(a and a in credited for a in (target_artists or []))
+    credited_lower = credited.lower()
+    credited_norm = norm_text(credited)
+    for a in (target_artists or []):
+        a_str = str(a or "").strip()
+        if not a_str:
+            continue
+        if contains_variant(credited_lower, a_str.lower()):
+            return True
+        variants = artist_variants(a_str, alias_groups)
+        if any(contains_variant(credited_norm, v) for v in variants):
+            return True
+    return False
+
+
+def _alias_groups(cfg) -> list[set[str]]:
+    """合并内置 ARTIST_ALIAS_GROUPS 与 cfg.aliases.art_aliases。"""
+    try:
+        from .match.normalize import cfg_alias_groups
+        return list(cfg_alias_groups(cfg))
+    except Exception:
+        pass
+    groups: list[set[str]] = []
+    try:
+        from .match.blacklist import ARTIST_ALIAS_GROUPS
+        groups.extend(set(g) for g in ARTIST_ALIAS_GROUPS)
+    except Exception:
+        pass
+    aliases = cfg.get("aliases") if isinstance(cfg, dict) else getattr(cfg, "aliases", None)
+    art = (aliases.get("art_aliases") if isinstance(aliases, dict)
+           else getattr(aliases, "art_aliases", None)) or {}
+    if isinstance(art, dict):
+        for k, vs in art.items():
+            if isinstance(k, str) and isinstance(vs, (list, tuple, set)):
+                grp = {str(k)} | {str(v) for v in vs if v}
+                if grp:
+                    groups.append(grp)
+    return groups
+
+
+def _cfg_section(cfg, name: str):
+    if cfg is None:
+        return None
+    return cfg.get(name) if isinstance(cfg, dict) else getattr(cfg, name, None)
+
+
+def _cfg_get(cfg, section: str, key: str, default):
+    sec = _cfg_section(cfg, section)
+    if sec is None:
+        return default
+    val = sec.get(key, default) if isinstance(sec, dict) else getattr(sec, key, default)
+    return default if val is None else val
 
 
 def better(lossless: bool, src_br: float, ogg_br: float) -> bool:
@@ -82,7 +134,7 @@ def _norm_dur(raw) -> float | None:
     return v / 1000.0 if v > 2000 else v
 
 
-def _netease_search(q: str, limit: int = 8) -> list[dict]:
+def _netease_search(q: str, limit: int = 8, cfg=None) -> list[dict]:
     """网易云单曲搜索适配：NeteaseSource.search 以假 track（name=查询词）传词。
 
     行归一为 {'id','name','dur'(秒或None),'artists'(串接str)}；
@@ -90,7 +142,8 @@ def _netease_search(q: str, limit: int = 8) -> list[dict]:
     """
     try:
         from .sources.netease import NeteaseSource
-        rows = NeteaseSource().search({"name": q, "artists": []}) or []
+        src = NeteaseSource(cfg) if cfg is not None else NeteaseSource()
+        rows = src.search({"name": q, "artists": []}) or []
     except Exception:
         return []
     out: list[dict] = []
@@ -112,14 +165,15 @@ def _netease_search(q: str, limit: int = 8) -> list[dict]:
     return [r for r in out if r["id"]]
 
 
-def _gd_url_for(sid: str) -> tuple[str | None, int]:
+def _gd_url_for(sid: str, cfg=None) -> tuple[str | None, int]:
     """GDStudio types=url 阶梯适配（netease 源）：999999→320000→128000。
 
     返回 (url, br)；无直链返回 (None, 0)。
     """
     try:
         from .sources.gdstudio import GdStudioSource
-        url, br, _size = GdStudioSource().get_url("netease", str(sid))
+        src = GdStudioSource(cfg) if cfg is not None else GdStudioSource()
+        url, br, _size = src.get_url("netease", str(sid))
     except Exception:
         return None, 0
     return (str(url) if url else None), int(br or 0)
@@ -128,7 +182,7 @@ def _gd_url_for(sid: str) -> tuple[str | None, int]:
 def _probe_meta(path: str) -> tuple[float, int, str, str]:
     """ffprobe (时长秒, 码率kbps, title, artist)；失败 (0.0, 0, '', '')。
 
-    ffmpeg.probe_meta 返回 {'duration','bit_rate','tags':{'title','artist'}}。
+    ffmpeg.probe_meta 返回 {'duration','bit_rate'(bps),'tags':{'title','artist'}}。
     """
     try:
         from . import ffmpeg
@@ -143,9 +197,14 @@ def _probe_meta(path: str) -> tuple[float, int, str, str]:
     dur = meta.get("duration") or 0.0
     br = meta.get("bit_rate") or 0
     try:
-        return float(dur), int(br), title, artist
+        dur_f = float(dur) if dur else 0.0
     except (TypeError, ValueError):
-        return 0.0, 0, title, artist
+        dur_f = 0.0
+    try:
+        br_i = round(float(br) / 1000) if br else 0
+    except (TypeError, ValueError):
+        br_i = 0
+    return dur_f, int(br_i), title, artist
 
 
 def _tag_get(tags, key: str):
@@ -174,29 +233,30 @@ def _remux_flac(src: Path, out: Path, title: str, artist: str, cover: Path | Non
 
 # ---------- 主流程 ----------
 
-def _load_match_fails(full_retry: bool) -> dict:
-    """读 tasks/match_fails.json；full_retry 或环境变量 FULL_RETRY=1 清空。"""
+def _load_match_fails(full_retry: bool, path: Path = MATCH_FAILS) -> dict:
+    """读 match_fails.json；full_retry 或环境变量 FULL_RETRY=1 清空。"""
     if full_retry or os.getenv("FULL_RETRY") == "1":
         return {}
     try:
         import json
-        return json.loads(MATCH_FAILS.read_text(encoding="utf-8"))
+        return json.loads(Path(path).read_text(encoding="utf-8"))
     except Exception:
         return {}
 
 
-def _save_match_fails(skip: dict) -> None:
+def _save_match_fails(skip: dict, path: Path = MATCH_FAILS) -> None:
     import json
     try:
-        MATCH_FAILS.parent.mkdir(parents=True, exist_ok=True)
-        MATCH_FAILS.write_text(json.dumps(skip, ensure_ascii=False), encoding="utf-8")
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(skip, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
 
 
-def _bump_match_fails(skip: dict, fname: str) -> None:
+def _bump_match_fails(skip: dict, fname: str, path: Path = MATCH_FAILS) -> None:
     skip[fname] = skip.get(fname, 0) + 1
-    _save_match_fails(skip)
+    _save_match_fails(skip, path)
 
 
 def _queries_for(title: str, artist: str) -> list[str]:
@@ -213,29 +273,45 @@ def _queries_for(title: str, artist: str) -> list[str]:
 
 
 def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
-                limit: int | None = None) -> list[dict]:
+                limit: int | None = None,
+                match_fails_path: str | Path | None = None,
+                search_fn=None, url_fn=None, download_fn=None) -> list[dict]:
     """扫描曲库该扩展名旧文件并逐个尝试无损升级，返回逐文件结果记录列表。
 
     ext: "mp3" / "ogg" / "all"（all = mp3+ogg）。
-    流程：permanent_skip（优先级最高）→ match_fails 跳名单 → 网易云 ±8s 搜 id
-    → GDStudio get_url 阶梯 → 仅源 .flac 才升（mp3 输入；ogg 输入走 better()）
-    → util.download_stream 下载（<100KB 拒收）→ ffprobe ±15s 验证 →
-    remux_flac 成品 <stem>.new.flac 再验 ±15s → os.replace 落位后删旧文件 →
+    流程：permanent_skip（优先级最高）→ match_fails 跳名单 → 网易云 ±search_win 搜 id
+    → GDStudio get_url 阶梯 → br>=999000 或 .flac 才下载（mp3 输入；ogg 输入走 better()）
+    → util.download_stream 下载（<100KB 拒收）→ ffprobe ±verify_win 验证 + codec_name 实测 FLAC
+    → remux_flac 成品 <stem>.new.flac 再验 ±verify_win → 备份落位后删旧文件 →
     按比例抽样 pcm_md5 留证（只记录不强制相等）。
+    match_fails_path / search_fn / url_fn / download_fn 为离线单测依赖注入。
     """
     from . import ffmpeg
-    from .util import download_stream
+    from .util import cross_move, download_stream
 
     setup_console()
 
-    music_dir = Path(cfg.paths.music)
-    staging = Path(cfg.paths.staging)
+    music_dir = Path(_cfg_get(cfg, "paths", "music", "music"))
+    staging = Path(_cfg_get(cfg, "paths", "staging", "staging"))
     staging.mkdir(parents=True, exist_ok=True)
     ext = (ext or "mp3").lower()
     exts = (".mp3", ".ogg") if ext == "all" else (f".{ext}",)
-    permanent_skip = [s for s in (cfg.aliases.permanent_skip or []) if s]
+    permanent_skip = [s for s in (_cfg_get(cfg, "aliases", "permanent_skip", []) or []) if s]
+    no_picks = [str(s) for s in (_cfg_get(cfg, "aliases", "no_picks", []) or []) if str(s)]
+    search_win = float(_cfg_get(cfg, "match", "search_win", SEARCH_WIN))
+    verify_win = float(_cfg_get(cfg, "match", "verify_win", VERIFY_WIN))
+    netease_interval = max(float(_cfg_get(cfg, "rate", "netease_min_interval", 0.5)), 0.0)
+    per_track_sleep = max(float(_cfg_get(cfg, "rate", "per_track_sleep", 1.0)), 0.0)
+    alias_groups = _alias_groups(cfg)
 
-    skip = _load_match_fails(full_retry)
+    fails_path = Path(match_fails_path) if match_fails_path is not None else MATCH_FAILS
+    _search = search_fn if search_fn is not None else (lambda q: _netease_search(q, cfg=cfg))
+    _get_url = url_fn if url_fn is not None else (lambda sid: _gd_url_for(sid, cfg=cfg))
+    _dl = download_fn if download_fn is not None else (
+        lambda u, dst: download_stream(u, dst, min_bytes=102400, timeout=300)
+    )
+
+    skip = _load_match_fails(full_retry, fails_path)
     files = sorted(f for f in os.listdir(music_dir)
                    if f.lower().endswith(exts))
     results: list[dict] = []
@@ -272,34 +348,52 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
         f_artist = f_artist.replace("Covered by ", " ").strip()
         title = t_title or f_title
         artist = t_artist or f_artist
-        artist_list = [a.strip() for a in re.split(r"[,/_、]", artist) if a.strip()]
+        artist_list = [a.strip() for a in re.split(r" _ |[,，/、&]", artist) if a.strip()]
         is_ogg_input = p.suffix.lower() == ".ogg"
 
-        # 网易云 ±8s 搜 id
+        # 网易云 ±search_win 搜 id
         sid = None
         for q in _queries_for(title, artist):
-            for s in _netease_search(q):
-                if not nt_in_nc(title, s.get("name") or ""):
+            for s in (_search(q) or []):
+                if not isinstance(s, dict):
                     continue
-                if artist_list and not artist_ok(artist_list, s.get("artists") or ""):
+                cand_id = str(s.get("id") or "")
+                cand_name = str(s.get("name") or s.get("title") or "")
+                if not cand_id:
                     continue
-                sd = s.get("dur")
-                if sd and sdur and abs(sd - sdur) > SEARCH_WIN:
+                if no_picks and any(pk == cand_id or pk in cand_name for pk in no_picks):
                     continue
-                sid = s["id"]
+                if not nt_in_nc(title, cand_name):
+                    continue
+                raw_artists = s.get("artists")
+                if isinstance(raw_artists, list):
+                    cand_artists = ", ".join(
+                        str(a.get("name") or "") if isinstance(a, dict) else str(a)
+                        for a in raw_artists if a
+                    )
+                else:
+                    cand_artists = str(raw_artists or "")
+                if artist_list and not artist_ok(artist_list, cand_artists, alias_groups=alias_groups):
+                    continue
+                sd = s.get("dur") if "dur" in s else _norm_dur(s.get("duration"))
+                if sd and sdur and abs(sd - sdur) > search_win:
+                    continue
+                sid = cand_id
                 break
             if sid:
                 break
-            time.sleep(max(getattr(cfg.rate, "netease_min_interval", 0.5), 0.0))
+            if netease_interval > 0:
+                time.sleep(netease_interval)
         if not sid:
-            _bump_match_fails(skip, fname)
+            _bump_match_fails(skip, fname, fails_path)
             rec["status"] = "no_match"
             rec["fails"] = skip[fname]
             results.append(rec)
             continue
 
         # GDStudio get_url 阶梯
-        url, src_br_tag = _gd_url_for(sid)
+        url_res = _get_url(sid)
+        url, src_br_tag = url_res[0], int(url_res[1] or 0)
         if not url:
             rec["status"] = "no_url"
             results.append(rec)
@@ -307,10 +401,14 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
         raw_ext = guess_ext_from_url(url)
         if raw_ext == ".bin":
             raw_ext = ".mp3"  # 蓝本兜底：未知后缀按 mp3 处理
-        src_lossless = raw_ext == ".flac"
+        claims_lossless = (raw_ext == ".flac") or (
+            isinstance(src_br_tag, (int, float))
+            and not isinstance(src_br_tag, bool)
+            and src_br_tag >= 999000
+        )
 
-        # mp3 输入：仅源 .flac 才升（upgrade_original.py:199-204）
-        if not is_ogg_input and not src_lossless:
+        # mp3 输入：仅声称无损（.flac 后缀或 br>=999000）才下载进入实测确认
+        if not is_ogg_input and not claims_lossless:
             rec["status"] = "not_lossless"
             rec["src_ext"] = raw_ext
             rec["src_br"] = src_br_tag
@@ -320,7 +418,7 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
         # 下载验证（<100KB 由 util.download_stream 拒收抛错）
         tmp = staging / f"upg_{idx}_{re.sub(r'[^0-9A-Za-z]', '', stem)[:24]}{raw_ext}"
         try:
-            nbytes = download_stream(url, tmp, min_bytes=102400, timeout=300)
+            nbytes = _dl(url, tmp)
         except Exception as e:
             rec["status"] = "download_error"
             rec["error"] = str(e)[:200]
@@ -331,14 +429,34 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
             ndur = ffmpeg.probe_duration(str(tmp))
         except Exception:
             ndur = None
-        if not ndur or ndur < MIN_DUR or (sdur and abs(ndur - sdur) > VERIFY_WIN):
+        if not ndur or ndur < MIN_DUR or (sdur and abs(ndur - sdur) > verify_win):
             tmp.unlink(missing_ok=True)
             rec["status"] = "duration_mismatch"
             rec["ndur"] = ndur
             results.append(rec)
             continue
 
-        # OGG 输入：better() 判定（lossless 或 码率 ≥ max(260, ogg+60)）
+        # 实测 FLAC 判定（同步 c0a6aa8）：ffprobe 查音频流 codec_name == "flac"
+        src_lossless = raw_ext == ".flac"
+        try:
+            info = ffmpeg.probe_full(str(tmp))
+            audio = next((st for st in (info.get("streams") or [])
+                          if st.get("codec_type") == "audio"), None)
+            codec = ((audio or {}).get("codec_name") or "").lower()
+            src_lossless = codec == "flac"
+        except Exception:
+            pass
+
+        # mp3 输入经实测确认非真 FLAC：不升并清理临时文件
+        if not is_ogg_input and not src_lossless:
+            tmp.unlink(missing_ok=True)
+            rec["status"] = "not_lossless"
+            rec["src_ext"] = raw_ext
+            rec["src_br"] = src_br_tag
+            results.append(rec)
+            continue
+
+        # OGG 输入：better() 判定（lossless 或 码率 ≥ max(260, ogg+60)，两端均为 kbps）
         if is_ogg_input and not src_lossless:
             src_br = round(nbytes * 8 / ndur / 1000)
             if not better(src_lossless, src_br, in_br):
@@ -380,11 +498,11 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
                 fdur = ffmpeg.probe_duration(str(tmp_final))
             except Exception:
                 fdur = None
-            if not fdur or abs(fdur - sdur) > VERIFY_WIN:
+            if not fdur or fdur < MIN_DUR or (sdur and abs(fdur - sdur) > verify_win):
                 # 不过连 .new.flac 一起删、写 match_fails
                 tmp_final.unlink(missing_ok=True)
                 tmp.unlink(missing_ok=True)
-                _bump_match_fails(skip, fname)
+                _bump_match_fails(skip, fname, fails_path)
                 rec["status"] = "final_duration_mismatch"
                 rec["fdur"] = fdur
                 rec["fails"] = skip[fname]
@@ -404,18 +522,40 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
                 continue
             tmp_final = tmp
 
-        # 落位：os.replace 后删旧文件
+        # 安全落位：若目标 final 已存在且与旧文件 p 路径不同，先备份再替换，失败回滚
+        backup_path: Path | None = None
         try:
-            os.replace(str(tmp_final), str(final))
-        except OSError:
-            from .util import cross_move
-            cross_move(tmp_final, final)
+            if final.exists() and final.resolve() != p.resolve():
+                backup_dir = staging / "backup"
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                backup_path = backup_dir / final.name
+                cross_move(final, backup_path)
+            try:
+                os.replace(str(tmp_final), str(final))
+            except OSError:
+                cross_move(tmp_final, final)
+        except Exception as e:
+            if backup_path is not None and backup_path.exists() and not final.exists():
+                try:
+                    cross_move(backup_path, final)
+                except Exception:
+                    pass
+            tmp_final.unlink(missing_ok=True)
+            tmp.unlink(missing_ok=True)
+            rec["status"] = "failed"
+            rec["error"] = f"place: {str(e)[:200]}"
+            results.append(rec)
+            continue
+
+        if backup_path is not None and backup_path.exists():
+            backup_path.unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)
         if p.exists() and p.resolve() != final.resolve():
             p.unlink(missing_ok=True)
 
         rec["status"] = "upgraded"
         rec["final"] = final.name
-        rec["src_ext"] = raw_ext
+        rec["src_ext"] = ".flac" if src_lossless else raw_ext
         if src_lossless:
             rec["ndur"] = round(ndur, 1)
         if need_pcm:
@@ -426,7 +566,8 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
             except Exception:
                 rec["pcm_md5_new"] = None
         upgraded += 1
-        time.sleep(1.0)
+        if per_track_sleep > 0:
+            time.sleep(per_track_sleep)
         results.append(rec)
 
     summary = {"total": len(files), "upgraded": upgraded,
