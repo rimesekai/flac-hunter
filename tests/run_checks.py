@@ -733,6 +733,24 @@ def check_y_playlist_ingest():
     assert t2[0]["name"] == "セプテンバーさん" and t2[0]["artists"] == ["RADWIMPS"], t2
     assert t2[0]["duration_ms"] == 307000 and t2[0]["uri"] == "bili:video:BV1x", t2
 
+    # 收藏夹 v2 解析：《》引号段提取 + 翻唱标记保留 + covered by/from 歌手
+    fav2 = _json.dumps({"code": 0, "data": {"medias": [
+        {"bvid": "BV2y", "title": "日文翻唱《トーキョーナイトダイブ/Tokyo Night Dive》 - KOTORI",
+         "duration": 227, "upper": {"name": "up_主"}}]}}).encode("utf-8")
+    t3, _ = parse_fav_payload(fav2)
+    assert t3[0]["name"] == "トーキョーナイトダイブ/Tokyo Night Dive（翻唱）", t3
+    assert t3[0]["artists"] == ["KOTORI"], t3
+    fav3 = _json.dumps({"code": 0, "data": {"medias": [
+        {"bvid": "BV3z", "title": "「共鳴」from V.W.P 4th ONE-MAN LIVE「現象Ⅳ -反転」",
+         "duration": 358}]}}).encode("utf-8")
+    t4, _ = parse_fav_payload(fav3)
+    assert t4[0]["name"] == "共鳴" and t4[0]["artists"] == ["V.W.P"], t4
+    fav4 = _json.dumps({"code": 0, "data": {"medias": [
+        {"bvid": "BV4a", "title": "アンインストール covered by ヰ世界情緒",
+         "duration": 281}]}}).encode("utf-8")
+    t5, _ = parse_fav_payload(fav4)
+    assert t5[0]["name"] == "アンインストール（翻唱）" and t5[0]["artists"] == ["ヰ世界情緒"], t5
+
     # 文本清单：'歌名 - 歌手 | 秒' / " _ " 与 / ，多歌手 / 无分隔行
     r1 = _cli._list_track_map("快晴 - Orangestar | 263.5", 1)
     assert r1["name"] == "快晴" and r1["artists"] == ["Orangestar"] and r1["duration_ms"] == 263500, r1

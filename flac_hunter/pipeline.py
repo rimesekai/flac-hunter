@@ -493,6 +493,58 @@ def _place_file(new: Path, target: Path, backup_dir: Path) -> None:
 
 # ---------- 单曲处理 ----------
 
+def _manual_bvid_rec(track, bvid, bili_src, cfg, dirs, sidecars, lyrics_fetcher) -> dict | None:
+    """收藏夹钦点视频直下（yt-dlp bestaudio → 转码/验证/侧车/落位）。
+
+    收藏的是用户亲手挑选的具体投稿（翻唱/现场等），平台官方版本不能顶替——
+    因此对 uri=bili:video:<bvid> 的曲目优先直下视频本体。成功返回完整 rec，失败 None。
+    """
+    from .sources.base import make_candidate
+
+    name = str(track.get("name") or "")
+    cand = make_candidate(
+        source="bili", id=bvid, title=name,
+        artists=[str(a) for a in (track.get("artists") or [])],
+        duration=track_duration_s(track), ext=None,
+        url=f"https://www.bilibili.com/video/{bvid}",
+        extra={"manual": True})
+    rec = {"uri": str(track.get("uri") or ""), "track": track, "score": None,
+           "source": "bili-manual", "path": None,
+           "dedupe_reason": str(track.get("dedupe_reason") or "")}
+    stem = _filename_stem(track)
+    cover_path = None
+    if sidecars and track.get("image_url"):
+        cover_path = _fetch_cover(track, Path(dirs["staging"]))
+    out, err, final_ext = _download_and_convert(track, cand, bili_src, cfg, dirs, cover_path)
+    if out is None:
+        return None
+    jpg_done = lrc_done = False
+    if sidecars:
+        if cover_path is not None:
+            try:
+                (Path(dirs["music"]) / f"{stem}.jpg").write_bytes(cover_path.read_bytes())
+                jpg_done = True
+            except Exception:
+                pass
+        lrc_text = _fetch_lyrics(track, _alt_titles(track, cfg), lyrics_fetcher,
+                                 track_duration_s(track))
+        if lrc_text:
+            try:
+                (Path(dirs["music"]) / f"{stem}.lrc").write_text(lrc_text, encoding="utf-8")
+                lrc_done = True
+            except Exception:
+                pass
+    target = Path(dirs["music"]) / f"{stem}{final_ext}"
+    try:
+        _place_file(out, target, Path(dirs["backup"]))
+    except Exception:
+        return None
+    rec.update(status=STATUS_DOWNLOADED, path=str(target), file=target.name,
+               ext=final_ext, jpg=jpg_done, lyrics=lrc_done,
+               candidate={"id": bvid, "title": name})
+    return rec
+
+
 def _process_track(track, cfg, srcs, done_uris, all_variants, virt, alias_groups,
                    include_existing, sidecars, lyrics_fetcher, dirs, gd_resolver) -> dict:
     """处理单条 track，返回结果记录（不落盘）。"""
@@ -520,6 +572,16 @@ def _process_track(track, cfg, srcs, done_uris, all_variants, virt, alias_groups
         rec["path"] = track.get("existing_file") or None
         rec["reason"] = "曲库已存在"
         return rec
+
+    # B站收藏夹钦点视频（uri=bili:video:<bvid>）：先直下视频本体，失败再走常规源循环
+    bvid = uri.split(":", 2)[2] if uri.startswith("bili:video:") else ""
+    if bvid:
+        bili_src = next((s for s in srcs if _source_name(s) == "bili"), None)
+        if bili_src is not None:
+            rec_manual = _manual_bvid_rec(track, bvid, bili_src, cfg, dirs,
+                                          sidecars, lyrics_fetcher)
+            if rec_manual is not None:
+                return rec_manual
 
     # 候选循环
     alts = _alt_titles(track, cfg)

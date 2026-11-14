@@ -139,10 +139,28 @@ def _fav_title_clean(title: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
+_FAV_ARTIST_FROM = (
+    re.compile(r"covered\s+by\s+([^\s《》「」『』].*?)\s*$", re.I),
+    re.compile(r"from\s+([^\s「『《》」』]+)"),
+)
+
+
+def _fav_artist_from(text: str) -> tuple:
+    """残段提取歌手：covered by X / from X -> (歌手, 其前方的歌名部分)。未命中返回 ("", "")。"""
+    for pat in _FAV_ARTIST_FROM:
+        m = pat.search(text)
+        if m:
+            return (m.group(1).strip().strip("》」』-–—_ ").strip(),
+                    text[:m.start()].strip(" -–—_"))
+    return "", ""
+
+
 def parse_fav_payload(payload: Any) -> tuple:
     """解析收藏夹响应 -> (tracks, has_more)。medias[] 转统一 track schema。
 
-    标题按曲库惯例 rpartition(" - ") 拆「歌名 - 歌手」；拆不动则艺人取 UP 主。
+    歌名优先取首个《…》/「…」引号段（B站投稿惯例）；无引号段按曲库惯例
+    rpartition(" - ") 拆「歌名 - 歌手」，拆不动则艺人取 UP 主。
+    翻唱/cover 版本标记保留进歌名（曲库惯例，防无损升级被官方原曲顶替）。
     """
     if isinstance(payload, (str, bytes)):
         try:
@@ -158,12 +176,25 @@ def parse_fav_payload(payload: Any) -> tuple:
             continue
         title = _fav_title_clean(str(m.get("title") or ""))
         upper = str((m.get("upper") or {}).get("name") or "")
-        if " - " in title:
+        q = re.search(r"《([^》]+)》", title) or re.search(r"「([^」]+)」", title)
+        if q is not None:
+            name = q.group(1).strip()
+            rest = (title[:q.start()] + " " + title[q.end():])
+            artist, _ = _fav_artist_from(rest)
+            if not artist and " - " in rest:
+                artist = rest.rpartition(" - ")[2].strip()
+            artist = artist or upper
+        elif " - " in title:
             name, _, artist = title.rpartition(" - ")
             name, artist = name.strip(), artist.strip()
+            artist = artist or upper
         else:
-            name, artist = title, upper
-        artists = [a.strip() for a in re.split(r"[,，/、&]", artist) if a.strip()] if artist else []
+            artist, name_prefix = _fav_artist_from(title)
+            name = name_prefix or title
+            artist = artist or upper
+        if re.search(r"翻唱|covered|cover", title, re.I) and not re.search(r"翻唱|cover", name, re.I):
+            name += "（翻唱）"
+        artists = [a.strip() for a in re.split(r"[,，/、&_]", artist) if a.strip()] if artist else []
         try:
             duration_ms = int(float(m.get("duration") or 0) * 1000) or None
         except (TypeError, ValueError):
