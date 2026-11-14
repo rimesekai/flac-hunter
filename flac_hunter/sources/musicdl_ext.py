@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import threading
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -102,6 +103,70 @@ def _default_client_factory():
     if not AVAILABLE or MusicClient is None:
         raise RuntimeError("musicdl 未安装或导入失败")
     return MusicClient()
+
+
+# ---------- 多平台歌单导入（prepare --uri <平台歌单URL>，走 musicdl.parseplaylist） ----------
+
+# 歌单解析启用的源（音乐平台优先；逐 client 试到成功为止，异常自动跳过）
+_PLAYLIST_SOURCES = ("NeteaseMusicClient", "QQMusicClient", "KugouMusicClient",
+                     "KuwoMusicClient", "MiguMusicClient", "QianqianMusicClient",
+                     "BilibiliMusicClient", "SodaMusicClient")
+
+
+def songinfo_to_track(info: Any) -> dict:
+    """musicdl SongInfo -> 统一 track schema（歌单导入用，不走下载候选）。"""
+    singers = str(getattr(info, "singers", "") or "")
+    artists = [p.strip() for p in re.split(r"[,，/、&]", singers) if p.strip()]
+    try:
+        duration_ms = int(getattr(info, "duration_s", 0) or 0) * 1000 or None
+    except (TypeError, ValueError):
+        duration_ms = None
+    return {
+        "uri": f"musicdl:{getattr(info, 'identifier', '') or ''}",
+        "name": str(getattr(info, "song_name", "") or ""),
+        "artists": artists,
+        "album": str(getattr(info, "album", "") or "") or None,
+        "duration_ms": duration_ms,
+        "image_url": None,
+    }
+
+
+# musicdl 的 parseplaylist 部分平台实现会无限挂起（实测 netease 端点 2026-11 已失效：
+# 带 #/ 的 URL 挂死、纯 URL 返回 0 首）。守护线程 + 截止时间硬性兜底，绝不拖死 CLI。
+_PLAYLIST_TIMEOUT_S = 90.0
+
+
+def parse_playlist(url: str, timeout: float = _PLAYLIST_TIMEOUT_S) -> list:
+    """多平台歌单 URL -> 统一 track 列表；musicdl 缺席/超时/解析失败一律返回 []。
+
+    注意：网易云/QQ/B站请优先走直连入口（netease:<id> / qq:<disstid> / bili:fav:<media_id>，
+    cli 会把已知平台的 http URL 自动路由过去）；本入口仅兜 musicdl 独有平台。
+    """
+    if not AVAILABLE:
+        return []
+    holder = []
+
+    def _run():
+        try:
+            client = MusicClient(music_sources=list(_PLAYLIST_SOURCES))
+            holder.append(client.parseplaylist(url) or [])
+        except Exception:
+            holder.append([])
+
+    th = threading.Thread(target=_run, daemon=True)
+    th.start()
+    th.join(timeout)
+    if not holder:  # 超时：守护线程随进程退出销毁，这里直接判失败
+        return []
+    out = []
+    for info in holder[0]:
+        try:
+            t = songinfo_to_track(info)
+            if t["name"]:
+                out.append(t)
+        except Exception:
+            continue
+    return out
 
 
 class MusicDlSource:

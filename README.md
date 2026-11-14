@@ -29,6 +29,12 @@ cp config.example.toml config.toml   # 填 paths.music / paths.spotify_cli / 别
 # 1. 拉歌单元数据 + 三层查重（艺人层 / 标题+时长 / 同题异唱）
 python cli.py prepare --uri spotify:playlist:<id> --out tasks/tracks.json
 python cli.py prepare --uri qq:1234567890
+python cli.py prepare --uri netease:<公开歌单id>          # 网易云直连（匿名公开歌单）
+python cli.py prepare --uri bili:fav:<收藏夹media_id>     # B站公开收藏夹
+python cli.py prepare --uri "https://..."                 # 平台歌单 URL：网易云/QQ 自动路由直连，
+                                                          # 其余平台走 musicdl（实验性：部分源已失效，
+                                                          # 90s 截止兜底；私密歌单需 --list 或 cookie）
+python cli.py prepare --list songs.txt                    # 文本清单兜底：每行 '歌名 - 歌手[ | 时长秒]'
 
 # 2. 编排下载（auto 源序择优；staging 验证后原子落位曲库）
 python cli.py download --tracks tasks/tracks.json --source auto

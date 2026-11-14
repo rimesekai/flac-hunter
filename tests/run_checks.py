@@ -704,6 +704,67 @@ def check_x_source_order():
     assert SOURCE_ORDER.index("musicdl") < SOURCE_ORDER.index("youtube"), SOURCE_ORDER
 
 
+# ---------- y. 多平台歌单入口（bytes 合成载荷 + 文本清单解析） ----------
+
+
+@check("y. 多平台歌单入口（netease/bili bytes 载荷 + --list 文本解析）")
+def check_y_playlist_ingest():
+    import json as _json
+
+    import cli as _cli
+    from flac_hunter.sources import musicdl_ext
+    from flac_hunter.sources.bilibili import parse_fav_payload
+    from flac_hunter.sources.netease import parse_playlist_payload
+
+    # 网易云歌单：bytes 载荷
+    ne = _json.dumps({"result": {"tracks": [
+        {"id": 28483032, "name": "セプテンバーさん", "artists": [{"name": "RADWIMPS"}],
+         "duration": 307200, "album": {"name": "RADWIMPS 3", "picUrl": "http://p/1.jpg"}}]}}).encode("utf-8")
+    t = parse_playlist_payload(ne)
+    assert len(t) == 1 and t[0]["name"] == "セプテンバーさん" and t[0]["duration_ms"] == 307200 \
+        and t[0]["album"] == "RADWIMPS 3" and t[0]["image_url"] == "http://p/1.jpg", t
+
+    # B站收藏夹：bytes 载荷（【】块剥离 + "歌名 - UP主" 拆分）
+    fav = _json.dumps({"code": 0, "data": {"has_more": True, "medias": [
+        {"bvid": "BV1x", "title": "【4K】セプテンバーさん - RADWIMPS", "duration": 307,
+         "upper": {"name": "someone"}, "cover": "http://i/1.jpg"}]}}).encode("utf-8")
+    t2, more = parse_fav_payload(fav)
+    assert more is True and len(t2) == 1, t2
+    assert t2[0]["name"] == "セプテンバーさん" and t2[0]["artists"] == ["RADWIMPS"], t2
+    assert t2[0]["duration_ms"] == 307000 and t2[0]["uri"] == "bili:video:BV1x", t2
+
+    # 文本清单：'歌名 - 歌手 | 秒' / " _ " 与 / ，多歌手 / 无分隔行
+    r1 = _cli._list_track_map("快晴 - Orangestar | 263.5", 1)
+    assert r1["name"] == "快晴" and r1["artists"] == ["Orangestar"] and r1["duration_ms"] == 263500, r1
+    r2 = _cli._list_track_map("Song - A _ B/C", 2)
+    assert r2["name"] == "Song" and r2["artists"] == ["A", "B", "C"], r2
+    r3 = _cli._list_track_map("只名无歌手", 3)
+    assert r3["name"] == "只名无歌手" and r3["artists"] == [] and r3["duration_ms"] is None, r3
+
+    # musicdl 歌单入口存在；musicdl 缺席场景由 o 项降级检查覆盖
+    assert hasattr(musicdl_ext, "parse_playlist"), "musicdl_ext.parse_playlist 缺失"
+
+    # musicdl 歌单超时兜底：parseplaylist 挂死时按截止时间返回 []（守护线程，实测踩坑）
+    class _HangClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def parseplaylist(self, url, **k):
+            time.sleep(5)
+            return []
+
+    orig_available, orig_client = musicdl_ext.AVAILABLE, musicdl_ext.MusicClient
+    try:
+        musicdl_ext.AVAILABLE = True
+        musicdl_ext.MusicClient = _HangClient
+        t0 = time.time()
+        out = musicdl_ext.parse_playlist("http://example.com/pl", timeout=1.0)
+        dt = time.time() - t0
+        assert out == [] and dt < 3.0, f"超时兜底失效: dt={dt:.1f}s out={out!r}"
+    finally:
+        musicdl_ext.AVAILABLE, musicdl_ext.MusicClient = orig_available, orig_client
+
+
 # ---------- 主流程 ----------
 
 

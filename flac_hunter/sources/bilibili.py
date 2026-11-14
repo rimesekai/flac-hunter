@@ -11,6 +11,7 @@ import html
 import json
 import re
 import subprocess
+import time
 import urllib.parse
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -26,6 +27,7 @@ except Exception:  # pragma: no cover - match 层未合入时内置等价三段�
 BILI_API = "https://api.bilibili.com/x/web-interface/search/all/v2"
 BILI_FINGER_SPI = "https://api.bilibili.com/x/frontend/finger/spi"
 BILI_REFERER = "https://www.bilibili.com/"
+BILI_API_FAV = "https://api.bilibili.com/x/v3/fav/resource/list"
 
 # buvid3 模块级缓存（蓝本 download_bili.py:170 global _buvid 的列表等价）
 _buvid_cache = [None]
@@ -125,6 +127,76 @@ def default_plan(track: dict) -> list:
     if artist:
         plan.append((artist, 3))
     return plan
+
+
+# ---------- 公开收藏夹 -> 歌单导入（prepare --uri bili:fav:<media_id>） ----------
+
+
+def _fav_title_clean(title: str) -> str:
+    """收藏夹视频标题 -> 歌名候选：剥 HTML 与【…】块、折叠空白。"""
+    t = clean_title(title)
+    t = re.sub(r"【[^】]*】", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def parse_fav_payload(payload: Any) -> tuple:
+    """解析收藏夹响应 -> (tracks, has_more)。medias[] 转统一 track schema。
+
+    标题按曲库惯例 rpartition(" - ") 拆「歌名 - 歌手」；拆不动则艺人取 UP 主。
+    """
+    if isinstance(payload, (str, bytes)):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            return [], False
+    if not isinstance(payload, dict):
+        return [], False
+    data = payload.get("data") or {}
+    out = []
+    for m in data.get("medias") or []:
+        if not isinstance(m, dict) or not m.get("bvid"):
+            continue
+        title = _fav_title_clean(str(m.get("title") or ""))
+        upper = str((m.get("upper") or {}).get("name") or "")
+        if " - " in title:
+            name, _, artist = title.rpartition(" - ")
+            name, artist = name.strip(), artist.strip()
+        else:
+            name, artist = title, upper
+        artists = [a.strip() for a in re.split(r"[,，/、&]", artist) if a.strip()] if artist else []
+        try:
+            duration_ms = int(float(m.get("duration") or 0) * 1000) or None
+        except (TypeError, ValueError):
+            duration_ms = None
+        out.append({
+            "uri": f"bili:video:{m.get('bvid')}",
+            "name": name,
+            "artists": artists,
+            "album": None,
+            "duration_ms": duration_ms,
+            "image_url": str(m.get("cover") or "") or None,
+        })
+    return out, bool((data.get("has_more")))
+
+
+def fetch_fav_tracks(media_id, max_pages: int = 30, timeout: int = 20) -> list:
+    """匿名拉取公开收藏夹曲目（翻页直到 has_more 为假）；失败返回已获取部分。"""
+    buvid = get_buvid3()
+    out = []
+    for pn in range(1, max_pages + 1):
+        url = BILI_API_FAV + "?" + urllib.parse.urlencode(
+            {"media_id": media_id, "pn": pn, "ps": 20, "order": "mtime",
+             "type": 0, "tid": 0, "platform": "web"})
+        try:
+            raw = _default_http(url, timeout, cookie=f"buvid3={buvid}" if buvid else None)
+        except Exception:
+            break
+        tracks, has_more = parse_fav_payload(raw)
+        out.extend(tracks)
+        if not has_more or not tracks:
+            break
+        time.sleep(0.5)
+    return out
 
 
 class BilibiliSource:

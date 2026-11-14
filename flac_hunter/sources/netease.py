@@ -150,6 +150,49 @@ def parse_album_search(payload: Any) -> list:
     return out
 
 
+# ---------- 公开歌单 -> 歌单导入（prepare --uri netease:<歌单id>） ----------
+
+
+def parse_playlist_payload(payload: Any) -> list:
+    """解析歌单详情响应（/api/playlist/detail 的 result.tracks，bytes 安全）。"""
+    if isinstance(payload, (str, bytes)):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            return []
+    if not isinstance(payload, dict):
+        return []
+    res = payload.get("result") or {}
+    out = []
+    for s in res.get("tracks") or []:
+        if not isinstance(s, dict) or s.get("id") is None:
+            continue
+        album = s.get("album") or {}
+        try:
+            duration_ms = int(s.get("duration") or 0) or None
+        except (TypeError, ValueError):
+            duration_ms = None
+        out.append({
+            "uri": f"netease:track:{s.get('id')}",
+            "name": str(s.get("name") or ""),
+            "artists": [p.strip() for p in _join_artists(s.get("artists")).split(", ") if p.strip()],
+            "album": str(album.get("name") or "") or None,
+            "duration_ms": duration_ms,
+            "image_url": str(album.get("picUrl") or "") or None,
+        })
+    return out
+
+
+def fetch_playlist(playlist_id, timeout: int = 20) -> list:
+    """匿名拉取公开歌单曲目（music.163.com/api/playlist/detail?id=）；失败返回 []。"""
+    url = NETEASE_BASE + f"/api/playlist/detail?id={playlist_id}"
+    try:
+        raw = http_get(url, ua=CHROME_UA, referer=NETEASE_REFERER, timeout=timeout)
+        return parse_playlist_payload(raw)
+    except Exception:
+        return []
+
+
 class NeteaseSource:
     """网易云源：单曲搜索为主，专辑/歌手 hotSongs 深挖为辅，player/url 128k 兜底。"""
 

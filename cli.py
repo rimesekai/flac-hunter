@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -123,6 +124,64 @@ def _qq_track_map(s, pos):
     }
 
 
+def _list_track_map(line: str, pos: int):
+    """文本清单行 -> 统一 schema。格式：'歌名 - 歌手[ | 时长秒]'；时长可选。
+
+    歌手段支持曲库惯例 " _ " 连接，也兼容 / ， 、 & 分隔；无 " - " 时整行作歌名。
+    """
+    raw = line.strip()
+    duration_ms = None
+    if "|" in raw:
+        raw, _, tail = raw.rpartition("|")
+        try:
+            duration_ms = int(float(tail.strip()) * 1000) or None
+        except (TypeError, ValueError):
+            duration_ms = None
+    if " - " in raw:
+        name, _, artist = raw.rpartition(" - ")
+        name, artist = name.strip(), artist.strip()
+    else:
+        name, artist = raw, ""
+    artists = [a.strip() for a in re.split(r" _ |[,，/、&]", artist) if a.strip()] if artist else []
+    return {
+        "uri": None,
+        "name": name,
+        "artists": artists,
+        "album": None,
+        "position": pos,
+        "duration_ms": duration_ms,
+        "image_url": None,
+    }
+
+
+def _http_playlist_route(uri: str):
+    """平台歌单 URL -> (kind, tracks)：已知平台走直连快路，其余交给 musicdl 兜底。"""
+    m = re.search(r"music\.163\.com.*?id=(\d+)", uri)
+    if m:
+        from flac_hunter.sources.netease import fetch_playlist
+
+        tracks = [dict(t, position=i) for i, t in enumerate(fetch_playlist(m.group(1)), 1)]
+        _log(f"netease playlist (URL 自动路由): fetched={len(tracks)}")
+        return "netease", tracks
+    m = re.search(r"y\.qq\.com/.*?playlist/(\d+)", uri) or re.search(r"y\.qq\.com/.*?[?&]id=(\d+)", uri)
+    if m:
+        from flac_hunter.spotify_cli import fetch_qq_playlist
+
+        songlist = _tracks_from(fetch_qq_playlist(m.group(1)))
+        tracks = [_qq_track_map(s, pos) for pos, s in enumerate(songlist, 1)]
+        _log(f"qq playlist (URL 自动路由): fetched={len(tracks)}")
+        return "qq", tracks
+    from flac_hunter.sources import musicdl_ext
+
+    if not musicdl_ext.AVAILABLE:
+        raise SystemExit("musicdl 未安装：pip install musicdl（或改用 spotify:/qq:/netease:/bili:fav:）")
+    tracks = [dict(t, position=i) for i, t in enumerate(musicdl_ext.parse_playlist(uri), 1)]
+    _log(f"musicdl playlist: fetched={len(tracks)}")
+    if not tracks:
+        _log("（musicdl 该平台解析可能已失效或需登录——网易云/QQ/B站请用直连入口，或 --list 兜底）")
+    return "musicdl", tracks
+
+
 # ---------- prepare ----------
 
 
@@ -135,8 +194,18 @@ def cmd_prepare(args):
     cfg = load_config()
     uri = args.uri
     tracks = []
-    kind = "spotify"
-    if uri.startswith("spotify:"):
+    kind = None
+    if args.list_file:
+        list_path = Path(args.list_file)
+        if not list_path.exists():
+            raise SystemExit(f"清单文件不存在: {list_path}")
+        lines = list_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        tracks = [_list_track_map(ln, i) for i, ln in enumerate(lines, 1) if ln.strip()]
+        kind = "list"
+        _log(f"list file: {list_path.name} | fetched={len(tracks)}")
+    elif not uri:
+        raise SystemExit("需要 --uri <平台歌单> 或 --list <文本清单>")
+    elif uri.startswith("spotify:"):
         from flac_hunter.spotify_cli import (
             SpotifyCli,
             parse_playlist_json,
@@ -175,8 +244,35 @@ def cmd_prepare(args):
         disstid = uri.split(":", 1)[1]
         songlist = _tracks_from(fetch_qq_playlist(disstid))
         tracks = [_qq_track_map(s, pos) for pos, s in enumerate(songlist, 1)]
+    elif uri.startswith("netease:"):
+        from flac_hunter.sources.netease import fetch_playlist
+
+        kind = "netease"
+        tracks = []
+        for pos, t in enumerate(fetch_playlist(uri.split(":", 1)[1]), 1):
+            t["position"] = pos
+            tracks.append(t)
+        _log(f"netease playlist: fetched={len(tracks)}")
+        if not tracks:
+            _log("（匿名只能读公开歌单；空结果可能是歌单私密/不存在/接口拦截）")
+    elif uri.startswith("bili:fav:"):
+        from flac_hunter.sources.bilibili import fetch_fav_tracks
+
+        kind = "bili"
+        media_id = uri.split(":", 2)[2]
+        tracks = []
+        for pos, t in enumerate(fetch_fav_tracks(media_id), 1):
+            t["position"] = pos
+            tracks.append(t)
+        _log(f"bili fav {media_id}: fetched={len(tracks)}")
+        if not tracks:
+            _log("（匿名只能读公开收藏夹；空结果可能是收藏夹私密/不存在/风控）")
+    elif uri.startswith(("http://", "https://")):
+        kind, tracks = _http_playlist_route(uri)
     else:
-        raise SystemExit("--uri 仅支持 spotify:... 或 qq:<disstid>")
+        raise SystemExit(
+            "--uri 支持 spotify:... | qq:<disstid> | netease:<歌单id> | "
+            "bili:fav:<收藏夹media_id> | 平台歌单URL；任意平台可用 --list <文本清单>")
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -480,7 +576,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("prepare", help="拉取歌单元数据并三层查重，输出 tracks.json")
-    p.add_argument("--uri", required=True, help="spotify:... 或 qq:<disstid>")
+    p.add_argument(
+        "--uri", default=None,
+        help="spotify:... | qq:<disstid> | netease:<歌单id> | bili:fav:<media_id> | 平台歌单URL")
+    p.add_argument(
+        "--list", dest="list_file", default=None,
+        help="文本清单（每行 '歌名 - 歌手[ | 时长秒]'，任意平台导出的兜底入口）")
     p.add_argument("--out", default="tasks/tracks.json", help="输出路径")
     p.set_defaults(func=cmd_prepare)
 
