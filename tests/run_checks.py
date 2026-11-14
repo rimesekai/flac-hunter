@@ -692,6 +692,18 @@ def check_w_bytes_payload():
     assert len(c2) == 1, "str 载荷路径回归"
 
 
+# ---------- x. SOURCE_ORDER 策略（FLAC 优先，用户裁定） ----------
+
+
+@check("x. SOURCE_ORDER：musicdl 先于视频站（yt-dlp 渠道无 FLAC）")
+def check_x_source_order():
+    from flac_hunter.pipeline import SOURCE_ORDER
+
+    assert SOURCE_ORDER[0] == "gdstudio" and SOURCE_ORDER[1] == "netease", SOURCE_ORDER
+    assert SOURCE_ORDER.index("musicdl") < SOURCE_ORDER.index("bili"), SOURCE_ORDER
+    assert SOURCE_ORDER.index("musicdl") < SOURCE_ORDER.index("youtube"), SOURCE_ORDER
+
+
 # ---------- 主流程 ----------
 
 

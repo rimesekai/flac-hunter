@@ -489,7 +489,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--source",
         default="auto",
-        choices=["auto", "gdstudio", "netease", "bili", "youtube", "musicdl"],
+        choices=["auto", "gdstudio", "netease", "musicdl", "bili", "youtube"],
         help="音源（默认 auto 依次择优）",
     )
     p.add_argument("--only", default=None, help="仅处理指定 id（逗号分隔）")

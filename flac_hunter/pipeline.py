@@ -32,7 +32,9 @@ try:  # 入口模块 UTF-8 输出保护
 except Exception:
     pass
 
-SOURCE_ORDER = ("gdstudio", "netease", "bili", "youtube", "musicdl")
+# FLAC 优先（用户裁定 2026-11-15）：yt-dlp 渠道（bili/youtube bestaudio）只有 AAC/Opus
+# 拿不到无损，musicdl 音乐平台源实测可返回 flac 候选，故排在视频站之前
+SOURCE_ORDER = ("gdstudio", "netease", "musicdl", "bili", "youtube")
 
 STATUS_DOWNLOADED = "downloaded"
 STATUS_EXISTS = "exists"
@@ -254,7 +256,7 @@ def _evaluate_source(sname, src, cands, track, cfg, alts, others, gd_resolver) -
     - gdstudio/netease：tier_of=='A' 且经阶梯解析 br≥999000（无损命中）
     - bili：score_bili≥min_video_score 且非低置信（分数<55 或时长差>60）
     - youtube：score_youtube≥50（注意冻结参数序 cand, track）
-    - musicdl/其他注入源：tier_of=='A'
+    - musicdl/其他注入源：tier_of=='A'；同档内按 quality（无损 > 320 > 其余）取最优
     """
     from .match.score import bili_low_confidence, pick_best, score_bili, score_youtube
     from .match.tier import tier_of, tier_sort_key
@@ -298,11 +300,19 @@ def _evaluate_source(sname, src, cands, track, cfg, alts, others, gd_resolver) -
             return best, sc
         return None, sc
 
-    # musicdl 与其他注入源：A 档即可
+    # musicdl 与其他注入源：A 档即可；同档内无损品质优先（flac/wav/ape/alac… > 320 > 其余）
+    def _qrank(c):
+        q = str((c.get("extra") or {}).get("quality") or "").lower()
+        if q in ("flac", "wav", "ape", "alac", "wv", "tta", "dsf", "dff"):
+            return 0
+        if q == "320":
+            return 1
+        return 2
+
     tiered = [c for c in cands if _tier(c) == "A"]
     if not tiered:
         return None, None
-    tiered.sort(key=lambda c: tier_sort_key(c, "A", sdur))
+    tiered.sort(key=lambda c: (_qrank(c), tier_sort_key(c, "A", sdur)))
     return tiered[0], None
 
 
