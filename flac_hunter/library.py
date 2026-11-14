@@ -15,7 +15,7 @@ import unicodedata
 from pathlib import Path
 
 from flac_hunter.ffmpeg import probe_duration, probe_meta
-from flac_hunter.match.blacklist import is_cover_like
+from flac_hunter.match.blacklist import ARTIST_ALIAS_GROUPS, is_cover_like
 from flac_hunter.match.normalize import artist_variants, core_key, norm_text
 
 AUDIO_EXT = {".flac", ".mp3", ".ogg", ".m4a", ".opus", ".wav"}
@@ -38,28 +38,60 @@ def artist_norm(s):
 
 
 def _alias_groups_from_cfg(cfg):
-    """从 config [aliases] art_aliases 取别名组；兼容 dict(canon->别名列表) 与列表套列表两种形态。"""
-    if not isinstance(cfg, dict):
-        return []
-    raw = (cfg.get("aliases") or {}).get("art_aliases") or []
-    groups = []
+    """合并内置 ARTIST_ALIAS_GROUPS 与 config [aliases] art_aliases。
+
+    兼容 Config dataclass、dict 与 None；art_aliases 支持 dict(canon->别名列表) 与列表套列表。
+    """
+    groups = [list(g) for g in ARTIST_ALIAS_GROUPS]
+    raw = None
+    if isinstance(cfg, dict):
+        raw = (cfg.get("aliases") or {}).get("art_aliases")
+    elif cfg is not None:
+        aliases_obj = getattr(cfg, "aliases", None)
+        if isinstance(aliases_obj, dict):
+            raw = aliases_obj.get("art_aliases")
+        elif aliases_obj is not None:
+            raw = getattr(aliases_obj, "art_aliases", None)
+    if not raw:
+        return groups
     if isinstance(raw, dict):
         for canon, others in raw.items():
-            groups.append([canon, *others])
+            if isinstance(others, (list, tuple, set)):
+                groups.append([canon, *others])
+            elif others:
+                groups.append([canon, others])
     else:
         for g in raw:
-            groups.append(list(g))
+            if isinstance(g, (list, tuple, set)):
+                groups.append(list(g))
     return groups
 
 
-def _canon_map(groups):
-    """{归一成员: canon}，canon = sorted(归一组)[0]（蓝本 prepare.py:29-33 / find_dups.py:39-43）。"""
-    m = {}
+def _merge_norm_groups(groups):
+    """将有交集的归一化别名集合并，确保内置组与用户扩展组共用同一等价类。"""
+    merged = []
     for group in groups:
         normed = {artist_norm(x) for x in group}
         normed.discard("")
         if not normed:
             continue
+        hit = [g for g in merged if g & normed]
+        if not hit:
+            merged.append(normed)
+        else:
+            rest = [g for g in merged if not (g & normed)]
+            combined = set(normed)
+            for g in hit:
+                combined |= g
+            rest.append(combined)
+            merged = rest
+    return merged
+
+
+def _canon_map(groups):
+    """{归一成员: canon}，canon = sorted(归一组)[0]（蓝本 prepare.py:29-33 / find_dups.py:39-43）。"""
+    m = {}
+    for normed in _merge_norm_groups(groups):
         canon = sorted(normed)[0]
         for x in normed:
             m[x] = canon
@@ -93,13 +125,9 @@ class LibraryIndex:
     def __init__(self, music_dir, cfg=None):
         self.music_dir = Path(music_dir)
         self.cfg = cfg
-        self._canon_map = _canon_map(_alias_groups_from_cfg(cfg))
-        self._norm_groups = []  # cfg 别名组的归一形态（track 侧展开用）
-        for group in _alias_groups_from_cfg(cfg):
-            normed = {artist_norm(x) for x in group}
-            normed.discard("")
-            if normed:
-                self._norm_groups.append(normed)
+        alias_groups = _alias_groups_from_cfg(cfg)
+        self._canon_map = _canon_map(alias_groups)
+        self._norm_groups = _merge_norm_groups(alias_groups)  # 内置+cfg 别名组的归一形态（track 侧展开用）
         self.by_file = {}    # file -> entry（首个 combo 注册的那份）
         self.index_full = {}  # norm_text(title) -> [entry]
         self.index_core = {}  # core_key(title) -> [entry]
@@ -110,7 +138,14 @@ class LibraryIndex:
 
     def scan(self):
         """平铺扫描曲库目录，构建两级标题索引。"""
-        for f in os.listdir(self.music_dir):
+        self.by_file.clear()
+        self.index_full.clear()
+        self.index_core.clear()
+        try:
+            names = os.listdir(self.music_dir)
+        except FileNotFoundError:
+            return self
+        for f in names:
             p = Path(f)
             if p.suffix.lower() not in AUDIO_EXT:
                 continue
@@ -124,7 +159,7 @@ class LibraryIndex:
             for title_part, artist_part in combos:
                 entry = {
                     "file": f,
-                    "path": str(self.music_dir / f),
+                    "path": os.path.abspath(self.music_dir / f),
                     "title": title_part,
                     "artist": artist_part,
                     "artist_key": artist_key(artist_part, self._canon_map),
@@ -159,9 +194,7 @@ class LibraryIndex:
                 pass  # 缓存损坏按无缓存处理
 
     def _cache_path(self):
-        tasks = self.cfg.get("tasks_dir") if isinstance(self.cfg, dict) else None
-        base = Path(tasks) if tasks else TASKS_DIR
-        return base / DURATIONS_CACHE_NAME
+        return _resolve_tasks_dir(self.cfg) / DURATIONS_CACHE_NAME
 
     # ---- 三层查重（蓝本 prepare.py:167-182）----
 
@@ -258,9 +291,26 @@ def save_durations_cache(path, cache):
     p.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
 
 
+def _resolve_tasks_dir(cfg):
+    """从 Config dataclass 或 dict 解析 tasks_dir，缺省回退 TASKS_DIR。"""
+    tasks = None
+    if isinstance(cfg, dict):
+        tasks = cfg.get("tasks_dir")
+        if not tasks and isinstance(cfg.get("paths"), dict):
+            tasks = cfg["paths"].get("tasks_dir")
+    elif cfg is not None:
+        tasks = getattr(cfg, "tasks_dir", None)
+        if not tasks:
+            paths = getattr(cfg, "paths", None)
+            if isinstance(paths, dict):
+                tasks = paths.get("tasks_dir")
+            elif paths is not None:
+                tasks = getattr(paths, "tasks_dir", None)
+    return Path(tasks) if tasks else TASKS_DIR
+
+
 def _default_cache_path(cfg):
-    tasks = cfg.get("tasks_dir") if isinstance(cfg, dict) else None
-    return (Path(tasks) if tasks else TASKS_DIR) / DURATIONS_CACHE_NAME
+    return _resolve_tasks_dir(cfg) / DURATIONS_CACHE_NAME
 
 
 def build_durations_cache(music_dir, cfg=None, cache_path=None, print_fn=print):
@@ -293,12 +343,18 @@ def find_dups(music_dir, cfg=None, print_fn=print):
     """
     canon_map = _canon_map(_alias_groups_from_cfg(cfg))
     music_dir = Path(music_dir)
-    files = [f for f in os.listdir(music_dir) if Path(f).suffix.lower() in AUDIO_EXT]
+    files = sorted(f for f in os.listdir(music_dir) if Path(f).suffix.lower() in AUDIO_EXT)
     dur_cache = {}
     for f in files:
-        dur_cache[f] = probe_meta(music_dir / f)  # {'duration','bit_rate','tags'}
+        try:
+            meta = probe_meta(music_dir / f)  # {'duration','bit_rate','tags'}
+        except Exception:
+            meta = {"duration": None, "bit_rate": None, "tags": {}}
+        if not isinstance(meta, dict):
+            meta = {"duration": None, "bit_rate": None, "tags": {}}
+        dur_cache[f] = meta
 
-    groups = {}
+    clusters = []
     for f in files:
         stem = Path(f).stem
         if " - " in stem:
@@ -306,21 +362,22 @@ def find_dups(music_dir, cfg=None, print_fn=print):
         else:
             title, artist = stem, ""
         key = (norm_title_dups(title), artist_key(artist, canon_map))
-        d = dur_cache[f]["duration"]
+        d = dur_cache[f].get("duration")
+        br = dur_cache[f].get("bit_rate")
         placed = False
-        for (kt, ka), members in list(groups.items()):
+        for kt, ka, members in clusters:
             if kt and key[0] and kt == key[0] and ka and key[1] and \
                     (ka == key[1] or ka in key[1] or key[1] in ka):
-                ref = dur_cache[members[0][0]]["duration"]
+                ref = dur_cache[members[0][0]].get("duration")
                 if ref and d and abs(ref - d) <= 3:
-                    members.append((f, d, dur_cache[f]["bit_rate"]))
+                    members.append((f, d, br))
                     placed = True
                     break
         if not placed:
-            groups.setdefault(key, [(f, d, dur_cache[f]["bit_rate"])])
+            clusters.append((key[0], key[1], [(f, d, br)]))
 
     out = []
-    for (kt, ka), members in groups.items():
+    for kt, ka, members in clusters:
         if len(members) > 1:
             out.append({
                 "title_key": kt,
