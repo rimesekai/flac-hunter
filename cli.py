@@ -483,7 +483,7 @@ def cmd_dedupe(args):
     if not music.is_dir():
         _log(f"曲库目录不存在: {music}")
         return
-    res = find_dups(str(music))
+    res = find_dups(str(music), cfg)
     groups = [g for g in _iter_groups(res) if len(g) > 1]
     groups.sort(key=len, reverse=True)
     _log(f"dedupe: {len(groups)} 组疑似重复")
@@ -503,7 +503,7 @@ def cmd_lyrics_check(args):
     if not music.is_dir():
         _log(f"曲库目录不存在: {music}")
         return
-    res = check_lyrics_dir(str(music))
+    res = check_lyrics_dir(str(music), cfg)
     if isinstance(res, dict):
         for cls in sorted(res):
             entries = res[cls] or []
