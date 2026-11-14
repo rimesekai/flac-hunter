@@ -882,6 +882,7 @@ def check_z2_cli_audit_dedupe():
     import cli as _cli
     from flac_hunter import audit as _audit
     from flac_hunter import config as _cfg
+    from flac_hunter import library as _lib
     from flac_hunter.config import Config, MatchCfg, Paths
 
     # 四项门任意一项为假或 issues 非空都必须 FAIL
@@ -898,6 +899,8 @@ def check_z2_cli_audit_dedupe():
     tmp = Path(tempfile.mkdtemp(prefix="fhchk_z2_"))
     orig_load_config = _cfg.load_config
     orig_audit_one = _audit.audit_one
+    orig_find_dups = _lib.find_dups
+    orig_check_lyrics = _audit.check_lyrics_dir
     try:
         music = tmp / "music"
         music.mkdir()
@@ -913,13 +916,24 @@ def check_z2_cli_audit_dedupe():
             seen_kwargs.append({"path": path, "dur_tol": dur_tol})
             return {"dur_ok": True, "tags_ok": True, "jpg_ok": True, "flac_ok": True, "issues": []}
 
-        _cfg.load_config = lambda path=None: Config(
+        cfg_obj = Config(
             paths=Paths(music=str(music), staging=str(tmp / "staging")),
             match=MatchCfg(verify_win=23.5),
         )
+        _cfg.load_config = lambda path=None: cfg_obj
         _audit.audit_one = fake_audit_one
         _cli.cmd_audit(argparse.Namespace())
         assert len(seen_kwargs) == 1 and seen_kwargs[0]["dur_tol"] == 23.5, seen_kwargs
+
+        # cmd_dedupe / cmd_lyrics_check：透传 cfg 给 find_dups / check_lyrics_dir
+        seen_dedupe_cfg = []
+        seen_lrc_cfg = []
+        _lib.find_dups = lambda m, cfg=None, **k: (seen_dedupe_cfg.append(cfg), [])[1]
+        _audit.check_lyrics_dir = lambda m, cfg=None: (seen_lrc_cfg.append(cfg), {})[1]
+        _cli.cmd_dedupe(argparse.Namespace())
+        _cli.cmd_lyrics_check(argparse.Namespace())
+        assert seen_dedupe_cfg == [cfg_obj], seen_dedupe_cfg
+        assert seen_lrc_cfg == [cfg_obj], seen_lrc_cfg
 
         # cmd_dedupe：members dict 格式化为可读文本，不直接 str(dict)
         groups = list(_cli._iter_groups([
@@ -931,6 +945,8 @@ def check_z2_cli_audit_dedupe():
     finally:
         _cfg.load_config = orig_load_config
         _audit.audit_one = orig_audit_one
+        _lib.find_dups = orig_find_dups
+        _audit.check_lyrics_dir = orig_check_lyrics
         shutil.rmtree(tmp, ignore_errors=True)
 
 
