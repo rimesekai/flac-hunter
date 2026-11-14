@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import os
 import random
@@ -81,8 +82,19 @@ def tasks_dir() -> Path:
     return _TASKS_DIR
 
 
-def _load_done_uris(tasks: Path) -> set:
-    """断点续跑：results.jsonl 中 status==downloaded 的 uri 集合。"""
+def _accepts_kw(fn, name: str) -> bool:
+    """检查可调用对象是否接受指定关键字参数或 **kwargs。"""
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+
+
+def _load_done_uris(tasks: Path, music_dir: Path | None = None) -> set:
+    """断点续跑：results.jsonl 中 status==downloaded 且目标文件仍存在的 uri 集合。"""
     done: set = set()
     try:
         with open(tasks / _RESULTS, "r", encoding="utf-8") as f:
@@ -91,8 +103,18 @@ def _load_done_uris(tasks: Path) -> set:
                     r = json.loads(line)
                 except Exception:
                     continue
-                if isinstance(r, dict) and r.get("status") == STATUS_DOWNLOADED:
-                    done.add(r.get("uri"))
+                if not (isinstance(r, dict) and r.get("status") == STATUS_DOWNLOADED):
+                    continue
+                uri = r.get("uri")
+                if not uri:
+                    continue
+                p = r.get("path")
+                if p:
+                    if Path(p).exists():
+                        done.add(uri)
+                elif music_dir is not None and r.get("file"):
+                    if (Path(music_dir) / str(r["file"])).exists():
+                        done.add(uri)
     except OSError:
         pass
     return done
@@ -108,14 +130,24 @@ def _append_result(tasks: Path, rec: dict) -> None:
 
 def _alias_groups(cfg) -> list:
     """内置 14 组 + config [aliases] art_aliases 合并的别名组列表。"""
+    try:
+        from .match.normalize import cfg_alias_groups
+        return list(cfg_alias_groups(cfg))
+    except Exception:
+        pass
     groups: list = []
     try:
         from .match.blacklist import ARTIST_ALIAS_GROUPS
         groups.extend(ARTIST_ALIAS_GROUPS)
     except Exception:
         pass
-    for k, vs in (getattr(cfg.aliases, "art_aliases", None) or {}).items():
-        groups.append({k, *vs})
+    aliases = cfg.get("aliases") if isinstance(cfg, dict) else getattr(cfg, "aliases", None)
+    art = (aliases.get("art_aliases") if isinstance(aliases, dict)
+           else getattr(aliases, "art_aliases", None)) or {}
+    if isinstance(art, dict):
+        for k, vs in art.items():
+            if isinstance(vs, (list, tuple, set)):
+                groups.append({k, *vs})
     return groups
 
 
@@ -133,9 +165,11 @@ def _alt_titles(track, cfg) -> list:
     name = str(track.get("name") or "")
     artists = track.get("artists") or []
     artist0 = str(artists[0]) if artists else ""
-    entries = getattr(cfg.aliases, "alt_titles", None) or []
+    entries = getattr(getattr(cfg, "aliases", None), "alt_titles", None) or []
     try:
         from .match.normalize import alt_titles_for
+        if _accepts_kw(alt_titles_for, "alias_groups"):
+            return list(alt_titles_for(name, artist0, entries, alias_groups=_alias_groups(cfg)))
         return list(alt_titles_for(name, artist0, entries))
     except Exception:
         pass
@@ -166,9 +200,12 @@ def _filename_stem(track) -> str:
     """落位文件名主干：track['filename_stem'] 优先，缺失按 "<名> - <艺人 _ 连接>" 构造。"""
     stem = track.get("filename_stem")
     if stem:
-        return str(stem)
+        s = str(stem)
+        if s.endswith(" - ") or (not track.get("artists") and s.endswith(" -")):
+            s = re.sub(r" -\s*$", "", s)
+        return s.strip().rstrip(".")
     name = str(track.get("name") or "")
-    artists = [str(a) for a in (track.get("artists") or []) if str(a)]
+    artists = [str(a).strip() for a in (track.get("artists") or []) if str(a).strip()]
     raw = f"{name} - {' _ '.join(artists)}" if artists else name
     try:
         from .match.normalize import sanitize
@@ -250,9 +287,19 @@ def _resolve_br_gd(gd_resolver, cand) -> tuple:
 
 # ---------- 候选挑选 ----------
 
+def _match_picks(cand: dict, picks: list[str]) -> bool:
+    """候选是否命中 picks（id 精确命中或 title 含任一非空子串）。"""
+    if not picks:
+        return False
+    cid = str(cand.get("id") or "")
+    ctitle = str(cand.get("title") or "")
+    return any(p and (p == cid or p in ctitle) for p in picks)
+
+
 def _evaluate_source(sname, src, cands, track, cfg, alts, others, gd_resolver) -> tuple:
     """按源类型挑选可接受候选。返回 (cand, score)；无合格候选返回 (None, 最高落选分或 None)。
 
+    - manual_picks（id 或 title 非空子串）在所有源中优先级最高
     - gdstudio/netease：tier_of=='A' 且经阶梯解析 br≥999000（无损命中）
     - bili：score_bili≥min_video_score 且非低置信（分数<55 或时长差>60）
     - youtube：score_youtube≥50（注意冻结参数序 cand, track）
@@ -261,17 +308,38 @@ def _evaluate_source(sname, src, cands, track, cfg, alts, others, gd_resolver) -
     from .match.score import bili_low_confidence, pick_best, score_bili, score_youtube
     from .match.tier import tier_of, tier_sort_key
 
+    aliases_cfg = getattr(cfg, "aliases", None)
+    no_picks = [str(x) for x in (getattr(aliases_cfg, "no_picks", None) or []) if str(x)]
+    if no_picks:
+        cands = [c for c in cands if isinstance(c, dict) and not _match_picks(c, no_picks)]
+    manual_picks = [str(x) for x in (getattr(aliases_cfg, "manual_picks", None) or []) if str(x)]
+    manual_cands = [c for c in cands if isinstance(c, dict) and _match_picks(c, manual_picks)]
+
     sdur = track_duration_s(track)
     name = str(track.get("name") or "")
     artists = track.get("artists") or []
     artist0 = str(artists[0]) if artists else ""
     name_aliases = [name] + [a for a in alts if a]
-    aliases = sorted(_artist_variants(artist0, _alias_groups(cfg))) if artist0 else []
+    alias_groups = _alias_groups(cfg)
+    aliases = sorted(_artist_variants(artist0, alias_groups)) if artist0 else []
+    search_win = getattr(getattr(cfg, "match", None), "search_win", 8.0)
 
     def _tier(c):
+        if _accepts_kw(tier_of, "search_win"):
+            return tier_of(c, sdur, name, aliases, name_aliases, search_win=search_win)
         return tier_of(c, sdur, name, aliases, name_aliases)
 
     if sname in GD_NETEASE:
+        if manual_cands:
+            resolved_manual = []
+            for c in manual_cands:
+                u, br = _resolve_br_gd(gd_resolver, c)
+                if br is not None and br >= LOSSLESS_BR:
+                    return c, None
+                resolved_manual.append((c, u, br))
+            for c, u, _br in resolved_manual:
+                if u or gd_resolver is None or sname == "netease":
+                    return c, None
         tiered = [c for c in cands if _tier(c) == "A"]
         tiered.sort(key=lambda c: tier_sort_key(c, "A", sdur))
         for c in tiered:
@@ -282,20 +350,29 @@ def _evaluate_source(sname, src, cands, track, cfg, alts, others, gd_resolver) -
         return None, None
 
     if sname == "bili":
-        best = pick_best(cands, track,
-                         lambda t, c: score_bili(t, c, alts=alts, other_artists=others))
+        bili_kw = {"alts": alts, "other_artists": others}
+        if _accepts_kw(score_bili, "alias_groups"):
+            bili_kw["alias_groups"] = alias_groups
+        if manual_cands:
+            best_m = pick_best(manual_cands, track, lambda t, c: score_bili(t, c, **bili_kw))
+            return best_m, score_bili(track, best_m, **bili_kw)
+        best = pick_best(cands, track, lambda t, c: score_bili(t, c, **bili_kw))
         if best is None:
             return None, None
-        sc = score_bili(track, best, alts=alts, other_artists=others)
+        sc = score_bili(track, best, **bili_kw)
         if sc >= cfg.match.min_video_score and not bili_low_confidence(sc, best, track):
             return best, sc
         return None, sc
 
     if sname == "youtube":
-        best = pick_best(cands, track, lambda t, c: score_youtube(c, t))
+        yt_kw = {"alias_groups": alias_groups} if _accepts_kw(score_youtube, "alias_groups") else {}
+        if manual_cands:
+            best_m = pick_best(manual_cands, track, lambda t, c: score_youtube(c, t, **yt_kw))
+            return best_m, score_youtube(best_m, track, **yt_kw)
+        best = pick_best(cands, track, lambda t, c: score_youtube(c, t, **yt_kw))
         if best is None:
             return None, None
-        sc = score_youtube(best, track)
+        sc = score_youtube(best, track, **yt_kw)
         if sc >= YT_MIN_SCORE:
             return best, sc
         return None, sc
@@ -309,6 +386,9 @@ def _evaluate_source(sname, src, cands, track, cfg, alts, others, gd_resolver) -
             return 1
         return 2
 
+    if manual_cands:
+        manual_sorted = sorted(manual_cands, key=lambda c: (_qrank(c), tier_sort_key(c, "A", sdur)))
+        return manual_sorted[0], None
     tiered = [c for c in cands if _tier(c) == "A"]
     if not tiered:
         return None, None
@@ -430,12 +510,15 @@ def _fetch_cover(track, staging: Path) -> Path | None:
     url = track.get("image_url")
     if not url:
         return None
+    raw_id = str(track.get("uri") or "cover").split(":")[-1]
+    safe_id = re.sub(r"[^0-9A-Za-z._-]", "_", raw_id).strip("._") or "cover"
     big = re.sub(r"ab67616d[0-9a-f]{8}", "ab67616d0000b273", url)
     for u in (big, url):
         try:
             data = http_get(u, timeout=30)
             if len(data) > 5000:
-                p = staging / f"{str(track.get('uri') or 'cover').split(':')[-1]}.jpg"
+                staging.mkdir(parents=True, exist_ok=True)
+                p = staging / f"{safe_id[:64]}.jpg"
                 p.write_bytes(data)
                 return p
         except Exception:
@@ -443,11 +526,12 @@ def _fetch_cover(track, staging: Path) -> Path | None:
     return None
 
 
-def _default_lyrics_fetcher(artist, title, duration_s, alt_variants):
+def _default_lyrics_fetcher(artist, title, duration_s, alt_variants, min_interval: float = 0.5):
     """默认歌词获取：sources.lrclib.search_lyrics（仅 sidecars=True 且未注入时调用）。"""
     try:
         from .sources import lrclib
-        res = lrclib.search_lyrics(artist, title, duration_s, alt_variants)
+        kw = {"min_interval": min_interval} if _accepts_kw(lrclib.search_lyrics, "min_interval") else {}
+        res = lrclib.search_lyrics(artist, title, duration_s, alt_variants, **kw)
     except Exception:
         return None
     if isinstance(res, dict):
@@ -458,13 +542,17 @@ def _default_lyrics_fetcher(artist, title, duration_s, alt_variants):
     return None
 
 
-def _fetch_lyrics(track, alts, lyrics_fetcher, sdur) -> str | None:
+def _fetch_lyrics(track, alts, lyrics_fetcher, sdur, cfg=None) -> str | None:
     """经 lyrics_fetcher(artist, title, duration_s, alt_variants) 取歌词文本。"""
-    fetcher = lyrics_fetcher if lyrics_fetcher is not None else _default_lyrics_fetcher
     artists = track.get("artists") or []
     artist0 = str(artists[0]) if artists else ""
+    title = str(track.get("name") or "")
     try:
-        text = fetcher(artist0, str(track.get("name") or ""), sdur, alts)
+        if lyrics_fetcher is not None:
+            text = lyrics_fetcher(artist0, title, sdur, alts)
+        else:
+            min_interval = getattr(getattr(cfg, "rate", None), "lrclib_min_interval", 0.5)
+            text = _default_lyrics_fetcher(artist0, title, sdur, alts, min_interval=min_interval)
     except Exception:
         return None
     if not text:
@@ -477,6 +565,7 @@ def _fetch_lyrics(track, alts, lyrics_fetcher, sdur) -> str | None:
 
 def _place_file(new: Path, target: Path, backup_dir: Path) -> None:
     """safe-replace：目标已存在先 cross_move 到备份目录，os.replace 落位，失败回滚备份。"""
+    target.parent.mkdir(parents=True, exist_ok=True)
     backup: Path | None = None
     if target.exists():
         backup_dir.mkdir(parents=True, exist_ok=True)
@@ -497,11 +586,11 @@ def _place_file(new: Path, target: Path, backup_dir: Path) -> None:
 
 # ---------- 单曲处理 ----------
 
-def _manual_bvid_rec(track, bvid, bili_src, cfg, dirs, sidecars, lyrics_fetcher) -> dict | None:
-    """收藏夹钦点视频直下（yt-dlp bestaudio → 转码/验证/侧车/落位）。
+def _manual_bvid_rec(track, bvid, bili_src, cfg, dirs, sidecars, lyrics_fetcher) -> dict:
+    """收藏夹钦点视频直下（yt-dlp bestaudio → 转码/验证/落位/侧车）。
 
     收藏的是用户亲手挑选的具体投稿（翻唱/现场等），平台官方版本不能顶替——
-    因此对 uri=bili:video:<bvid> 的曲目优先直下视频本体。成功返回完整 rec，失败 None。
+    因此对 uri=bili:video:<bvid> 的曲目直下视频本体，失败记 STATUS_FAILED 并记录原因。
     """
     from .sources.base import make_candidate
 
@@ -517,36 +606,44 @@ def _manual_bvid_rec(track, bvid, bili_src, cfg, dirs, sidecars, lyrics_fetcher)
            "dedupe_reason": str(track.get("dedupe_reason") or "")}
     stem = _filename_stem(track)
     cover_path = None
-    if sidecars and track.get("image_url"):
-        cover_path = _fetch_cover(track, Path(dirs["staging"]))
-    out, err, final_ext = _download_and_convert(track, cand, bili_src, cfg, dirs, cover_path)
-    if out is None:
-        return None
-    jpg_done = lrc_done = False
-    if sidecars:
-        if cover_path is not None:
-            try:
-                (Path(dirs["music"]) / f"{stem}.jpg").write_bytes(cover_path.read_bytes())
-                jpg_done = True
-            except Exception:
-                pass
-        lrc_text = _fetch_lyrics(track, _alt_titles(track, cfg), lyrics_fetcher,
-                                 track_duration_s(track))
-        if lrc_text:
-            try:
-                (Path(dirs["music"]) / f"{stem}.lrc").write_text(lrc_text, encoding="utf-8")
-                lrc_done = True
-            except Exception:
-                pass
-    target = Path(dirs["music"]) / f"{stem}{final_ext}"
     try:
-        _place_file(out, target, Path(dirs["backup"]))
-    except Exception:
-        return None
-    rec.update(status=STATUS_DOWNLOADED, path=str(target), file=target.name,
-               ext=final_ext, jpg=jpg_done, lyrics=lrc_done,
-               candidate={"id": bvid, "title": name})
-    return rec
+        if sidecars and track.get("image_url"):
+            cover_path = _fetch_cover(track, Path(dirs["staging"]))
+        out, err, final_ext = _download_and_convert(track, cand, bili_src, cfg, dirs, cover_path)
+        if out is None:
+            rec["status"] = STATUS_FAILED
+            rec["error"] = err or "bili-manual 下载失败"
+            return rec
+        target = Path(dirs["music"]) / f"{stem}{final_ext}"
+        try:
+            _place_file(out, target, Path(dirs["backup"]))
+        except Exception as e:
+            _rm(out)
+            rec["status"] = STATUS_FAILED
+            rec["error"] = f"落位失败: {str(e)[:200]}"
+            return rec
+        jpg_done = lrc_done = False
+        if sidecars:
+            if cover_path is not None and cover_path.exists():
+                try:
+                    (Path(dirs["music"]) / f"{stem}.jpg").write_bytes(cover_path.read_bytes())
+                    jpg_done = True
+                except Exception:
+                    pass
+            lrc_text = _fetch_lyrics(track, _alt_titles(track, cfg), lyrics_fetcher,
+                                     track_duration_s(track), cfg=cfg)
+            if lrc_text:
+                try:
+                    (Path(dirs["music"]) / f"{stem}.lrc").write_text(lrc_text, encoding="utf-8")
+                    lrc_done = True
+                except Exception:
+                    pass
+        rec.update(status=STATUS_DOWNLOADED, path=str(target), file=target.name,
+                   ext=final_ext, jpg=jpg_done, lyrics=lrc_done,
+                   candidate={"id": bvid, "title": name})
+        return rec
+    finally:
+        _rm(cover_path)
 
 
 def _process_track(track, cfg, srcs, done_uris, all_variants, virt, alias_groups,
@@ -556,8 +653,8 @@ def _process_track(track, cfg, srcs, done_uris, all_variants, virt, alias_groups
     rec = {"uri": uri, "track": track, "score": None, "source": None, "path": None,
            "dedupe_reason": str(track.get("dedupe_reason") or "")}
 
-    # a) 断点续跑：已 downloaded 的 uri 跳过
-    if uri and uri in done_uris:
+    # a) 断点续跑：非 include_existing 时，已 downloaded 且文件存在的 uri 跳过
+    if uri and uri in done_uris and not include_existing:
         rec["status"] = STATUS_EXISTS
         rec["reason"] = "resume: results.jsonl 已 downloaded"
         return rec
@@ -577,15 +674,13 @@ def _process_track(track, cfg, srcs, done_uris, all_variants, virt, alias_groups
         rec["reason"] = "曲库已存在"
         return rec
 
-    # B站收藏夹钦点视频（uri=bili:video:<bvid>）：先直下视频本体，失败再走常规源循环
+    # B站收藏夹钦点视频（uri=bili:video:<bvid>）：存在 bili 源时直下视频本体，失败不得回退顶替
     bvid = uri.split(":", 2)[2] if uri.startswith("bili:video:") else ""
     if bvid:
         bili_src = next((s for s in srcs if _source_name(s) == "bili"), None)
         if bili_src is not None:
-            rec_manual = _manual_bvid_rec(track, bvid, bili_src, cfg, dirs,
-                                          sidecars, lyrics_fetcher)
-            if rec_manual is not None:
-                return rec_manual
+            return _manual_bvid_rec(track, bvid, bili_src, cfg, dirs,
+                                    sidecars, lyrics_fetcher)
 
     # 候选循环
     alts = _alt_titles(track, cfg)
@@ -593,7 +688,7 @@ def _process_track(track, cfg, srcs, done_uris, all_variants, virt, alias_groups
     for a in (track.get("artists") or []):
         own |= _artist_variants(str(a), alias_groups)
     others = {v for v in (all_variants - own) if v and v not in virt}
-    no_picks = {str(x) for x in (getattr(cfg.aliases, "no_picks", None) or [])}
+    no_picks = [str(x) for x in (getattr(cfg.aliases, "no_picks", None) or []) if str(x)]
 
     saw_candidates = False
     saw_search_error = False
@@ -606,13 +701,29 @@ def _process_track(track, cfg, srcs, done_uris, all_variants, virt, alias_groups
         except Exception:
             saw_search_error = True
             continue
-        cands = [c for c in cands if isinstance(c, dict) and str(c.get("id")) not in no_picks]
+        cands = [c for c in cands if isinstance(c, dict) and not _match_picks(c, no_picks)]
         if cands:
             saw_candidates = True
         try:
             cand, sc = _evaluate_source(sname, src, cands, track, cfg, alts, others, gd_resolver)
         except Exception:
-            continue
+            cand, sc = None, None
+        # NeteaseSource 主搜索无 A 档无损命中时，若存在 search_album_artists 方法则补充深挖一次
+        if cand is None and sname == "netease" and callable(getattr(src, "search_album_artists", None)):
+            try:
+                deep = src.search_album_artists(track) or []
+            except Exception:
+                deep = []
+            seen_ids = {str(c.get("id") or "") for c in cands}
+            deep = [c for c in deep if isinstance(c, dict)
+                    and str(c.get("id") or "") not in seen_ids
+                    and not _match_picks(c, no_picks)]
+            if deep:
+                saw_candidates = True
+                try:
+                    cand, sc = _evaluate_source(sname, src, deep, track, cfg, alts, others, gd_resolver)
+                except Exception:
+                    cand, sc = None, None
         if cand is not None:
             chosen = (cand, sc, sname, src)
             break
@@ -638,58 +749,62 @@ def _process_track(track, cfg, srcs, done_uris, all_variants, virt, alias_groups
     rec["score"] = sc
     stem = _filename_stem(track)
 
-    # sidecar 封面（转换内嵌用；仅 sidecars=True 时下载）
+    # sidecar 封面（转换内嵌用；仅 sidecars=True 时下载，finally 确保清理暂存）
     cover_path = None
-    if sidecars and track.get("image_url"):
-        cover_path = _fetch_cover(track, Path(dirs["staging"]))
-
-    out, err, final_ext = _download_and_convert(track, cand, src, cfg, dirs, cover_path)
-    if out is None:
-        rec["status"] = STATUS_FAILED
-        rec["error"] = err
-        return rec
-
-    # sidecar：.jpg + .lrc（蓝本 download.py:195-246；仅 sidecars=True）
-    jpg_done = lrc_done = False
-    if sidecars:
-        if cover_path is not None:
-            try:
-                (Path(dirs["music"]) / f"{stem}.jpg").write_bytes(cover_path.read_bytes())
-                jpg_done = True
-            except Exception:
-                pass
-        lrc_text = _fetch_lyrics(track, alts, lyrics_fetcher, track_duration_s(track))
-        if lrc_text:
-            try:
-                (Path(dirs["music"]) / f"{stem}.lrc").write_text(lrc_text, encoding="utf-8")
-                lrc_done = True
-            except Exception:
-                pass
-
-    # safe-replace 原子落位到曲库
-    target = Path(dirs["music"]) / f"{stem}{final_ext}"
     try:
-        _place_file(out, target, Path(dirs["backup"]))
-    except Exception as e:
-        rec["status"] = STATUS_FAILED
-        rec["error"] = f"落位失败: {str(e)[:200]}"
-        return rec
+        if sidecars and track.get("image_url"):
+            cover_path = _fetch_cover(track, Path(dirs["staging"]))
 
-    rec["status"] = STATUS_DOWNLOADED
-    rec["path"] = str(target)
-    rec["file"] = target.name
-    rec["ext"] = final_ext
-    rec["jpg"] = jpg_done
-    rec["lyrics"] = lrc_done
-    rec["candidate"] = {"id": str(cand.get("id") or ""), "title": str(cand.get("title") or "")}
-    return rec
+        out, err, final_ext = _download_and_convert(track, cand, src, cfg, dirs, cover_path)
+        if out is None:
+            rec["status"] = STATUS_FAILED
+            rec["error"] = err
+            return rec
+
+        # safe-replace 原子落位到曲库（先落位音频，成功后再写 .jpg / .lrc 侧车）
+        target = Path(dirs["music"]) / f"{stem}{final_ext}"
+        try:
+            _place_file(out, target, Path(dirs["backup"]))
+        except Exception as e:
+            _rm(out)
+            rec["status"] = STATUS_FAILED
+            rec["error"] = f"落位失败: {str(e)[:200]}"
+            return rec
+
+        # sidecar：.jpg + .lrc（蓝本 download.py:195-246；仅 sidecars=True）
+        jpg_done = lrc_done = False
+        if sidecars:
+            if cover_path is not None and cover_path.exists():
+                try:
+                    (Path(dirs["music"]) / f"{stem}.jpg").write_bytes(cover_path.read_bytes())
+                    jpg_done = True
+                except Exception:
+                    pass
+            lrc_text = _fetch_lyrics(track, alts, lyrics_fetcher, track_duration_s(track), cfg=cfg)
+            if lrc_text:
+                try:
+                    (Path(dirs["music"]) / f"{stem}.lrc").write_text(lrc_text, encoding="utf-8")
+                    lrc_done = True
+                except Exception:
+                    pass
+
+        rec["status"] = STATUS_DOWNLOADED
+        rec["path"] = str(target)
+        rec["file"] = target.name
+        rec["ext"] = final_ext
+        rec["jpg"] = jpg_done
+        rec["lyrics"] = lrc_done
+        rec["candidate"] = {"id": str(cand.get("id") or ""), "title": str(cand.get("title") or "")}
+        return rec
+    finally:
+        _rm(cover_path)
 
 
 # ---------- 入口 ----------
 
 def run_download(tracks, cfg, *, source: str = "auto", only_ids=None, limit=None,
                  include_existing: bool = False, sources=None, sidecars: bool = True,
-                 lyrics_fetcher=None) -> list:
+                 lyrics_fetcher=None, tasks_dir: str | Path | None = None) -> list:
     """下载编排入口：返回逐曲结果记录列表（并逐曲追加到 tasks/results.jsonl）。
 
     tracks: prepare 产出的 track dict 列表；cfg: config.Config。
@@ -698,13 +813,14 @@ def run_download(tracks, cfg, *, source: str = "auto", only_ids=None, limit=None
     sidecars: False 时跳过封面/歌词全部步骤（零网络离线测试的官方开关）。
     lyrics_fetcher: 注入歌词函数 (artist, title, duration_s, alt_variants)->text|None，
     None 时默认 lrclib.search_lyrics。
+    tasks_dir: 运行产物目录（默认 REPO_ROOT / "tasks"），方便离线测试隔离。
     """
     setup_console()
     music_dir = Path(cfg.paths.music)
     staging = Path(cfg.paths.staging)
     staging.mkdir(parents=True, exist_ok=True)
     dirs = {"music": str(music_dir), "staging": str(staging), "backup": str(staging / "backup")}
-    tasks = tasks_dir()
+    tasks = Path(tasks_dir) if tasks_dir is not None else globals()["tasks_dir"]()
     tasks.mkdir(parents=True, exist_ok=True)
 
     # 过滤：only_ids → limit（蓝本 download_bili.py:437-453）；
@@ -717,7 +833,7 @@ def run_download(tracks, cfg, *, source: str = "auto", only_ids=None, limit=None
     if limit:
         sel = sel[:limit]
 
-    done_uris = _load_done_uris(tasks)
+    done_uris = set() if include_existing else _load_done_uris(tasks, music_dir)
     alias_groups = _alias_groups(cfg)
     all_variants: set = set()
     for t in (tracks or []):
@@ -733,7 +849,8 @@ def run_download(tracks, cfg, *, source: str = "auto", only_ids=None, limit=None
     gd_resolver = _gd_resolver(srcs, cfg) if any(
         _source_name(s) in GD_NETEASE for s in (srcs or [])) else None
 
-    scale = max(float(getattr(cfg.rate, "per_track_sleep", 1.0) or 1.0), 0.0)
+    raw_scale = getattr(getattr(cfg, "rate", None), "per_track_sleep", 1.0)
+    scale = max(float(1.0 if raw_scale is None else raw_scale), 0.0)
     results: list = []
     for track in sel:
         rec = _process_track(track, cfg, srcs or [], done_uris, all_variants, virt,
@@ -741,5 +858,6 @@ def run_download(tracks, cfg, *, source: str = "auto", only_ids=None, limit=None
                              dirs, gd_resolver)
         results.append(rec)
         _append_result(tasks, rec)
-        time.sleep(random.uniform(0.8, 1.8) * scale)  # 每曲后限速
+        if scale > 0:
+            time.sleep(random.uniform(0.8, 1.8) * scale)  # 每曲后限速
     return results
