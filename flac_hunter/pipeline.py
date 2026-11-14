@@ -362,20 +362,24 @@ def _download_and_convert(track, cand, src, cfg, dirs, cover_path) -> tuple:
         _rm(src_path)
         return None, f"验证不过: 实测 {dur}s", None
 
-    # 源真 FLAC 判定：gd br≥999000 或 url 后缀 .flac；
-    # musicdl extra.quality=='flac' 再实测编码确为 flac 才算（sources 契约备忘，防错标）
+    # 源真 FLAC 判定：gd br≥999000 或 url 后缀 .flac 算元数据声称无损；
+    # 实测编码兜底对所有源生效——B站 30280「Hi-Res」层可能是真 FLAC 也可能只是 AAC，
+    # yt-dlp 各站同理。元数据会撒谎，codec_name 不会：实测 flac 就保 FLAC remux，不转码。
     br = (cand.get("extra") or {}).get("br")
     url = str(cand.get("url") or "")
     lossless = (isinstance(br, (int, float)) and not isinstance(br, bool) and br >= LOSSLESS_BR) \
         or (bool(url) and url.split("?")[0].lower().endswith(".flac"))
-    if not lossless and (cand.get("extra") or {}).get("quality") == "flac":
-        try:
-            info = ffmpeg.probe_full(str(src_path))
-            audio = next((s for s in info.get("streams") or []
-                          if s.get("codec_type") == "audio"), None)
-            lossless = ((audio or {}).get("codec_name") or "").lower() == "flac"
-        except Exception:
-            lossless = False
+    try:
+        info = ffmpeg.probe_full(str(src_path))
+        audio = next((s for s in info.get("streams") or []
+                      if s.get("codec_type") == "audio"), None)
+        codec = ((audio or {}).get("codec_name") or "").lower()
+    except Exception:
+        codec = ""
+    if (cand.get("extra") or {}).get("quality") == "flac":
+        lossless = codec == "flac"  # musicdl 契约：声称 flac 必须实测确认，防错标
+    elif not lossless and codec == "flac":
+        lossless = True  # 元数据没报无损但实测是 FLAC（如 B站真 Hi-Res）→ 保无损不转码
 
     stem = _filename_stem(track)
     title = str(track.get("name") or "")
