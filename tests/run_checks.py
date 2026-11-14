@@ -1378,6 +1378,31 @@ def check_z7_matcher_sources_fixes():
         _gd._gd_last_hit[0] = orig_last_hit
 
 
+# ---------- z8. 曲名侧 cover 词边界（评审发现的 L136 残留缺陷） ----------
+
+
+@check("z8. score_bili 曲名含 discover 等子串不被「点赞曲是 cover」规则误杀")
+def check_z8_trackname_cover_boundary():
+    from flac_hunter.match.score import score_bili
+    from flac_hunter.sources.base import make_candidate
+
+    # 曲名 "Alive and Discover" 内含 cover 子串，但不是独立词——不得判为翻唱曲
+    trk = {"name": "Alive and Discover", "artists": ["SomeBand"], "duration_ms": 200000, "album": ""}
+    cand = make_candidate(source="bili", id="BVz8", title="Alive and Discover (Official Video)",
+                          artists=["SomeBand"], duration=200.0,
+                          url="https://www.bilibili.com/video/BVz8", extra={"play": 50000})
+    sc = score_bili(trk, cand, alts=[], other_artists=set())
+    assert sc > 55, f"曲名子串 cover 误杀: score={sc}"
+
+    # 真翻唱标记（英文独立词 cover）仍拦截：曲名含 cover 且候选无覆盖艺人 → -999
+    trk2 = {"name": "Song - Cover", "artists": ["SomeoneElse"], "duration_ms": 200000, "album": ""}
+    cand2 = make_candidate(source="bili", id="BVz8b", title="Song (Different Story)",
+                           artists=["Other"], duration=200.0,
+                           url="https://www.bilibili.com/video/BVz8b")
+    sc2 = score_bili(trk2, cand2, alts=[], other_artists=set())
+    assert sc2 == -999, f"真 cover 曲名未被拦截: score={sc2}"
+
+
 # ---------- 主流程 ----------
 
 

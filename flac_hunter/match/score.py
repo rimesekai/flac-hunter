@@ -132,7 +132,9 @@ def score_bili(track: dict, cand: dict, alts=None, other_artists=None, *, alias_
         if not distinctive and len(matched_name.split()) <= 2:
             s -= 20
     # 点赞曲明确是 cover 时，候选必须出现覆盖艺人（download_bili.py:276-278）
-    if "cover" in (track_name + " " + (track.get("album") or "")).lower() and not (artist_in_title or artist_in_channel):
+    # 曲名侧同样用词边界：discover/discovery 等内含 cover 子串的曲名不算翻唱标记
+    if _bili_bad_hit((track_name + " " + (track.get("album") or "")).lower(), "cover") \
+            and not (artist_in_title or artist_in_channel):
         return -999
     if re.search(r"official|官方|公式", channel):
         s += 10
