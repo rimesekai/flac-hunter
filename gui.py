@@ -49,13 +49,18 @@ class Job:
     """一个作业：下载/升级是 cli.py 子进程，审计在服务内直跑。"""
 
     def __init__(self, jid: str, jtype: str, cmd: list | None, cwd: Path,
-                 total: int = 0, tracks_path: str | None = None):
+                 total: int = 0, tracks_path: str | None = None,
+                 tracks_list: list | None = None, source: str = "auto",
+                 include_existing: bool = False):
         self.id = jid
         self.type = jtype
         self.cmd = cmd
         self.cwd = cwd
         self.total = total
         self.tracks_path = tracks_path
+        self.tracks_list = tracks_list          # 下载逐曲模式的目标曲目列表
+        self.source = source
+        self.include_existing = include_existing
         self.status = "queued"
         self.exit_code: int | None = None
         self.started = time.time()
@@ -66,6 +71,9 @@ class Job:
         self.done = 0
         self.status_counts: dict = {}
         self.audit: dict | None = None          # 审计作业的全量结构化结果
+        self.paused = False                     # 逐曲下载：干完当前首后停下
+        self.skip_requested = False             # 逐曲下载：终止当前首、开下一首
+        self.current = None                     # 正在处理的曲目
         self._res_offset = 0
         res = cwd / "tasks" / "results.jsonl"
         if res.exists():
@@ -80,6 +88,7 @@ class Job:
             "progress": {"done": self.done, "total": self.total},
             "tracks_path": self.tracks_path,
             "audit": self.audit,
+            "paused": self.paused, "current": self.current,
         }
         if with_log:
             d["log_tail"] = list(self.log)[max(0, len(self.log) - LOG_TAIL):]
@@ -125,9 +134,12 @@ class Runner:
         self.worker.start()
 
     def submit(self, jtype: str, cmd: list | None, total: int = 0,
-               tracks_path: str | None = None) -> dict:
+               tracks_path: str | None = None, tracks_list: list | None = None,
+               source: str = "auto", include_existing: bool = False) -> dict:
         jid = uuid.uuid4().hex[:10]
-        job = Job(jid, jtype, cmd, REPO, total=total, tracks_path=tracks_path)
+        job = Job(jid, jtype, cmd, REPO, total=total, tracks_path=tracks_path,
+                  tracks_list=tracks_list, source=source,
+                  include_existing=include_existing)
         with self.lock:
             self.jobs[jid] = job
             self.order.append(jid)
@@ -148,6 +160,9 @@ class Runner:
             try:
                 if job.type == "audit":
                     self._run_audit(job)
+                    job.exit_code = 0
+                elif job.type == "download" and job.tracks_list is not None:
+                    self._run_download_pertrack(job)
                     job.exit_code = 0
                 else:
                     self._run_subproc(job)
@@ -184,6 +199,83 @@ class Runner:
                 job.log.append(line)
         proc.wait()
         job.exit_code = proc.returncode
+        job._stop_tail.set()
+
+    def _download_cmd(self, job: Job, only_key: str) -> list:
+        cmd = [PY, "-X", "utf8", "cli.py", "download", "--tracks", job.tracks_path,
+               "--source", job.source, "--only", only_key]
+        if job.include_existing:
+            cmd.append("--include-existing")
+        return cmd
+
+    def _append_ledger(self, job: Job, track: dict, status: str) -> None:
+        """GUI 侧补写台账行（跳过的曲目），results.jsonl 保持逐曲一条的约定。"""
+        try:
+            res = job.cwd / "tasks" / "results.jsonl"
+            res.parent.mkdir(parents=True, exist_ok=True)
+            rec = {"uri": track.get("uri"), "status": status, "source": "gui",
+                   "track": {"name": track.get("name"), "artists": track.get("artists")},
+                   "ts": _now_h()}
+            with res.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    def _run_download_pertrack(self, job: Job) -> None:
+        """逐曲模式：每首歌一个 --only 子进程。
+
+        暂停 = 干完当前首后不再开下一首；跳过 = 立即终止当前首、开下一首。
+        断点续跑由 results.jsonl 的 downloaded 台账天然支持。
+        """
+        n = len(job.tracks_list)
+        job.log.append(f"[runner] 逐曲模式：共 {n} 首（支持 ⏸ 暂停 / ⏭ 跳过）")
+        t_tail = threading.Thread(target=_tail_results, args=(job,), daemon=True)
+        t_tail.start()
+        for i, t in enumerate(job.tracks_list):
+            # 暂停/跳过闸门：当前没有子进程在跑，点跳过直接略过这首
+            skipped_now = False
+            while True:
+                if job.skip_requested:
+                    job.skip_requested = False
+                    skipped_now = True
+                    break
+                if not job.paused:
+                    break
+                job.summary = "已暂停（点「继续」恢复）"
+                time.sleep(0.5)
+            if skipped_now:
+                job.log.append(f"[runner] 已跳过：{t.get('name')}")
+                self._append_ledger(job, t, "skipped")
+                continue
+
+            uri = str(t.get("uri") or "")
+            only_key = uri.split(":")[-1] if uri else str(t.get("name") or "")
+            job.summary = f"正在处理 {i + 1}/{n}：{t.get('name')}"
+            job.current = {"uri": uri, "name": t.get("name")}
+            job.log.append(f"[runner] ({i + 1}/{n}) {t.get('name')}")
+            before = job.done
+            proc = subprocess.Popen(self._download_cmd(job, only_key),
+                                    cwd=str(job.cwd),
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            assert proc.stdout is not None
+            killed = False
+            for raw in iter(proc.stdout.readline, b""):
+                if job.skip_requested:
+                    proc.kill()
+                    killed = True
+                    break
+                line = raw.decode("utf-8", "replace").rstrip("\r\n")
+                if line:
+                    job.log.append(line)
+            proc.wait()
+            job.current = None
+            if killed:
+                # 等台账尾巴追上来；确认这条曲没有台账记录才补 skipped
+                time.sleep(1.3)
+                if job.done == before:
+                    self._append_ledger(job, t, "skipped")
+            elif proc.returncode != 0:
+                job.log.append(f"[runner] 退出码 {proc.returncode}（台账已记录）")
         job._stop_tail.set()
 
     def _run_audit(self, job: Job) -> None:
@@ -406,13 +498,10 @@ class Handler(BaseHTTPRequestHandler):
                     body.get("only") or None)
                 if total == 0:
                     raise ValueError("没有可下载的目标（全部已存在或选择为空）")
-                cmd = [PY, "-X", "utf8", "cli.py", "download",
-                       "--tracks", tracks, "--source", str(body.get("source") or "auto")]
-                if body.get("only"):
-                    cmd += ["--only", ",".join(str(x) for x in body["only"])]
-                if body.get("include_existing"):
-                    cmd.append("--include-existing")
-                job = r.submit("download", cmd, total=total, tracks_path=tracks)
+                job = r.submit("download", None, total=total, tracks_path=tracks,
+                               tracks_list=targets,
+                               source=str(body.get("source") or "auto"),
+                               include_existing=bool(body.get("include_existing")))
                 self._json(job)
             elif self.path == "/api/upgrade":
                 ext = str(body.get("ext") or "mp3")
@@ -423,6 +512,20 @@ class Handler(BaseHTTPRequestHandler):
                     cmd.append("--full-retry")
                 job = r.submit("upgrade", cmd)
                 self._json(job)
+            elif self.path.endswith("/pause") and self.path.startswith("/api/job/"):
+                jid = self.path.split("/")[3]
+                job = r.jobs.get(jid)
+                if job is None or job.type != "download" or job.tracks_list is None:
+                    raise ValueError("仅下载作业支持暂停/继续")
+                job.paused = bool(body.get("paused"))
+                self._json(job.snapshot())
+            elif self.path.endswith("/skip") and self.path.startswith("/api/job/"):
+                jid = self.path.split("/")[3]
+                job = r.jobs.get(jid)
+                if job is None or job.type != "download" or job.tracks_list is None:
+                    raise ValueError("仅下载作业支持跳过")
+                job.skip_requested = True
+                self._json(job.snapshot())
             elif self.path == "/api/audit":
                 job = r.submit("audit", None)  # 服务内直跑，不走子进程
                 self._json(job)

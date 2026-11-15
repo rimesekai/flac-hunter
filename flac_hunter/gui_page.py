@@ -179,7 +179,13 @@ details.rawlog summary { cursor: pointer; color: var(--dim); font-size: 12.5px; 
   <div class="card hidden" id="joblog-card">
     <h2 id="joblog-title">日志</h2>
     <div class="bar" id="dlbar-wrap" style="margin-bottom:8px"><i id="dlbar"></i></div>
-    <div class="hint" id="dlpct" style="margin:0 0 10px"></div>
+    <div class="row hidden" id="jobctl-wrap" style="margin-bottom:10px">
+      <div class="hint" id="dlpct" style="margin:0"></div>
+      <span style="flex:1"></span>
+      <span class="hint" id="cur-track" style="margin:0"></span>
+      <button class="ghost hidden" id="btn-pause">⏸ 暂停</button>
+      <button class="ghost hidden" id="btn-skip">⏭ 跳过这首</button>
+    </div>
     <div class="log" id="joblog"></div>
   </div>
 </section>
@@ -457,6 +463,17 @@ async function pollJob() {
       logOffset = tail.length;
       $("#joblog").scrollTop = $("#joblog").scrollHeight;
     }
+    // 下载作业的暂停/跳过控制
+    const ctl = $("#jobctl-wrap");
+    if (j.type === "download" && j.status === "running" && j.current !== undefined) {
+      ctl.classList.remove("hidden");
+      $("#btn-pause").textContent = j.paused ? "▶️ 继续" : "⏸ 暂停";
+      $("#btn-pause").dataset.paused = j.paused ? "1" : "";
+      $("#cur-track").textContent = j.current && j.current.name ?
+        (j.paused ? "已暂停（当前曲目完成后停下）" : "正在处理：" + j.current.name) : "";
+    } else {
+      ctl.classList.add("hidden");
+    }
     if (j.status !== "running" && j.status !== "queued") {
       const cb = onDoneMap[activeJobId];
       if (cb) { delete onDoneMap[activeJobId]; cb(); }
@@ -470,6 +487,20 @@ function watchJob(id, onDone) {
   if (onDone) onDoneMap[id] = onDone;
   openJobLog(id);
 }
+
+// ---------- 下载控制（暂停/跳过） ----------
+$("#btn-pause").onclick = async () => {
+  if (!activeJobId) return;
+  const paused = $("#btn-pause").dataset.paused === "1";
+  await api(`/api/job/${activeJobId}/pause`, {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({paused: !paused})});
+};
+$("#btn-skip").onclick = async () => {
+  if (!activeJobId) return;
+  await api(`/api/job/${activeJobId}/skip`, {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: "{}"});
+};
 
 // ---------- 升级 / 审计 ----------
 $("#btn-up").onclick = async () => {

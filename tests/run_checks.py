@@ -1428,6 +1428,47 @@ def check_z9_gui():
     assert "log_tail" in snap and snap["progress"]["total"] == 0
 
 
+# ---------- z10. GUI 逐曲下载模式（跳过闸门 + 桩命令 + 台账隔离） ----------
+
+
+@check("z10. gui 逐曲下载：首曲跳过写台账、次曲桩命令执行、暂停即停")
+def check_z10_pertrack():
+    import tempfile
+
+    import gui as _gui
+
+    tmp = Path(tempfile.mkdtemp(prefix="fh_z10_"))
+    try:
+        r = _gui.Runner(_gui.load_config())
+        job = _gui.Job("z10per", "download", None, tmp, total=2, tracks_path="t.json",
+                       tracks_list=[{"uri": "bili:video:A", "name": "T1"},
+                                    {"uri": "bili:video:B", "name": "T2"}])
+        r.jobs[job.id] = job
+        r.order.append(job.id)
+        orig_cmd = r._download_cmd
+        r._download_cmd = lambda j, k: [sys.executable, "-c", "print('z10-pertrack-ok')"]
+        try:
+            job.skip_requested = True   # 第一首：入队即点跳过 → 写 skipped 台账不开工
+            job.paused = False
+            r._run_download_pertrack(job)  # 同步直跑（worker 线程外）
+        finally:
+            r._download_cmd = orig_cmd
+            job._stop_tail.set()
+
+        assert job.skip_requested is False, "跳过标志未被消费"
+        # 第一首被跳过 → 台账写 skipped；第二首跑了桩命令
+        ledger = (tmp / "tasks" / "results.jsonl")
+        assert ledger.exists(), "skipped 台账未写入"
+        recs = [json.loads(l) for l in ledger.read_text(encoding="utf-8").splitlines() if l.strip()]
+        assert any(x.get("status") == "skipped" and x.get("track", {}).get("name") == "T1"
+                   for x in recs), f"skipped 记录缺失: {recs}"
+        assert any("z10-pertrack-ok" in line for line in job.log), "第二首桩命令未执行"
+        assert job.current is None, "处理完当前曲目后 current 未清空"
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # ---------- 主流程 ----------
 
 
