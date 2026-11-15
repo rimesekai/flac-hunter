@@ -1403,6 +1403,31 @@ def check_z8_trackname_cover_boundary():
     assert sc2 == -999, f"真 cover 曲名未被拦截: score={sc2}"
 
 
+# ---------- z9. GUI 模块：页面资源 + 作业运行器（子进程日志/退出码） ----------
+
+
+@check("z9. gui JobRunner 跑通自定义子进程作业 + PAGE_HTML 含关键 API")
+def check_z9_gui():
+    import gui as _gui
+
+    # 页面资源：关键 API 与 UI 文案在场
+    for marker in ("/api/state", "/api/download", "任务列表", "无损升级"):
+        assert marker in _gui.PAGE_HTML, f"页面缺 {marker!r}"
+
+    # 作业运行器：跑一个自定义子进程作业，收日志与退出码
+    r = _gui.Runner(_gui.load_config())
+    snap0 = r.submit("custom", [sys.executable, "-c", "print('z9gui-ok')"])
+    job = r.jobs[snap0["id"]]
+    deadline = time.time() + 20
+    while time.time() < deadline and job.status in ("queued", "running"):
+        time.sleep(0.2)
+    assert job.status == "done" and job.exit_code == 0, \
+        f"作业未正常完成: status={job.status} exit={job.exit_code}"
+    assert any("z9gui-ok" in line for line in job.log), f"日志未捕获输出: {list(job.log)}"
+    snap = job.snapshot(with_log=True)
+    assert "log_tail" in snap and snap["progress"]["total"] == 0
+
+
 # ---------- 主流程 ----------
 
 
