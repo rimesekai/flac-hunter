@@ -2,12 +2,15 @@
 
 用法：python gui.py [--port 8756]  → 自动开浏览器。
 核心四件套：歌单导入（含查重预览）→ 勾选下载（实时进度）→ 无损升级 → 质量审计。
-作业以子进程方式跑仓库自带的 cli.py（零侵入核心），同一时间只跑一个作业；
-进度来自 tasks/results.jsonl 的增量行。其余子命令在更新目标清单里（README）。
+下载/升级以子进程跑仓库自带的 cli.py（零侵入核心）；审计在服务内直跑
+audit_one（拿到全量结构化结果，不受 CLI 只打印前 50 条失败的限制）。
+同一时间只跑一个作业；下载/升级进度来自 tasks/results.jsonl 增量行。
+其余子命令在更新目标清单里（README §七）。
 """
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import subprocess
 import sys
@@ -33,6 +36,8 @@ from flac_hunter.gui_page import PAGE_HTML  # noqa: E402
 REPO = Path(__file__).resolve().parent
 LOG_CAP = 1200           # 每作业日志行数上限（环形丢弃最旧的）
 LOG_TAIL = 400           # /api/job 返回的日志尾行数
+AUDIT_FILES_CAP = 2000   # 审计不合格文件明细上限
+GATE_ZH = {"dur_ok": "时长偏差", "tags_ok": "缺标签", "jpg_ok": "缺封面", "flac_ok": "伪FLAC"}
 PY = sys.executable or "python"
 
 
@@ -41,9 +46,9 @@ def _now_h() -> str:
 
 
 class Job:
-    """一个 cli.py 子进程作业；progress 由 results.jsonl 增量行统计。"""
+    """一个作业：下载/升级是 cli.py 子进程，审计在服务内直跑。"""
 
-    def __init__(self, jid: str, jtype: str, cmd: list, cwd: Path,
+    def __init__(self, jid: str, jtype: str, cmd: list | None, cwd: Path,
                  total: int = 0, tracks_path: str | None = None):
         self.id = jid
         self.type = jtype
@@ -60,6 +65,7 @@ class Job:
         self.log: deque[str] = deque(maxlen=LOG_CAP)
         self.done = 0
         self.status_counts: dict = {}
+        self.audit: dict | None = None          # 审计作业的全量结构化结果
         self._res_offset = 0
         res = cwd / "tasks" / "results.jsonl"
         if res.exists():
@@ -73,6 +79,7 @@ class Job:
             "summary": self.summary, "total": self.total,
             "progress": {"done": self.done, "total": self.total},
             "tracks_path": self.tracks_path,
+            "audit": self.audit,
         }
         if with_log:
             d["log_tail"] = list(self.log)[max(0, len(self.log) - LOG_TAIL):]
@@ -117,7 +124,7 @@ class Runner:
         self.worker = threading.Thread(target=self._loop, daemon=True)
         self.worker.start()
 
-    def submit(self, jtype: str, cmd: list, total: int = 0,
+    def submit(self, jtype: str, cmd: list | None, total: int = 0,
                tracks_path: str | None = None) -> dict:
         jid = uuid.uuid4().hex[:10]
         job = Job(jid, jtype, cmd, REPO, total=total, tracks_path=tracks_path)
@@ -139,12 +146,20 @@ class Runner:
             job = self.jobs[jid]
             job.status = "running"
             try:
-                self._run(job)
+                if job.type == "audit":
+                    self._run_audit(job)
+                    job.exit_code = 0
+                else:
+                    self._run_subproc(job)
                 job.status = "done" if job.exit_code == 0 else "error"
-                job.summary = f"exit={job.exit_code}"
-                if job.status_counts:
-                    job.summary += " · " + " ".join(
+                if job.audit:
+                    job.summary = (f"{job.audit['total']} 个 FLAC："
+                                   f"通过 {job.audit['pass']} · 不合格 {job.audit['fail']}")
+                elif job.status_counts:
+                    job.summary = "完成 · " + " ".join(
                         f"{k}:{v}" for k, v in sorted(job.status_counts.items()))
+                else:
+                    job.summary = "完成" if job.exit_code == 0 else f"失败 exit={job.exit_code}"
                 if job.exit_code != 0:
                     job.summary += "（看日志末尾找原因）"
             except Exception as e:  # noqa: BLE001
@@ -155,7 +170,7 @@ class Runner:
                 job.ended = time.time()
                 job._stop_tail.set()
 
-    def _run(self, job: Job) -> None:
+    def _run_subproc(self, job: Job) -> None:
         job.log.append(f"[runner] {' '.join(job.cmd)}")
         t = threading.Thread(target=_tail_results, args=(job,), daemon=True)
         t.start()
@@ -170,6 +185,65 @@ class Runner:
         proc.wait()
         job.exit_code = proc.returncode
         job._stop_tail.set()
+
+    def _run_audit(self, job: Job) -> None:
+        """服务内直跑四项质量门：全量结构化结果，逐文件推进度。"""
+        from flac_hunter.audit import audit_one
+
+        cfg = self.cfg
+        music = Path(cfg.paths.music)
+        if not music.is_dir():
+            job.log.append(f"[audit] 曲库目录不存在: {music}")
+            job.exit_code = 1
+            return
+        files = sorted(music.glob("*.flac"))
+        job.total = len(files)
+        job.log.append(f"[audit] {len(files)} 个 .flac，逐个四项门检查…")
+        try:
+            params = set(inspect.signature(audit_one).parameters)
+        except (TypeError, ValueError):
+            params = set()
+        kwargs = {}
+        for name in ("duration_ms", "expect_ms"):
+            if name in params:
+                kwargs[name] = None  # 无期望时长来源，时长门交由调用方配置
+                break
+        if "dur_tol" in params:
+            kwargs["dur_tol"] = getattr(cfg.match, "verify_win", 15.0)
+
+        passed = failed = 0
+        by_issue: dict = {}
+        files_out: list = []
+        for f in files:
+            try:
+                r = audit_one(str(f), **kwargs)
+            except TypeError:
+                try:
+                    r = audit_one(str(f))
+                except Exception as exc:
+                    r = {"path": str(f), "dur_ok": True, "tags_ok": True, "jpg_ok": True,
+                         "flac_ok": False, "issues": [f"扫描异常: {exc}"]}
+            except Exception as exc:
+                r = {"path": str(f), "dur_ok": True, "tags_ok": True, "jpg_ok": True,
+                     "flac_ok": False, "issues": [f"扫描异常: {exc}"]}
+            issues = [str(x) for x in (r.get("issues") or [])]
+            if not issues:
+                failed_gates = [GATE_ZH[g] for g in ("dur_ok", "tags_ok", "jpg_ok", "flac_ok")
+                                if r.get(g) is not True]
+                issues = failed_gates
+            if issues:
+                failed += 1
+                for it in issues:
+                    by_issue[it] = by_issue.get(it, 0) + 1
+                if len(files_out) < AUDIT_FILES_CAP:
+                    files_out.append({"name": Path(str(r.get("path") or f)).name,
+                                      "issues": issues})
+            else:
+                passed += 1
+            job.done += 1
+        job.audit = {"total": job.total, "pass": passed, "fail": failed,
+                     "by_issue": by_issue, "files": files_out}
+        job.log.append(f"[audit] 完成：通过 {passed}，不合格 {failed}（明细见审计页）")
 
 
 def _library_counts(music_dir: str) -> dict:
@@ -262,7 +336,6 @@ class Handler(BaseHTTPRequestHandler):
             qs = parse_qs(urlparse(self.path).query)
             path = (qs.get("path") or [""])[0]
             try:
-                _, records_all = None, None
                 p = Path(path)
                 if not p.is_absolute():
                     p = REPO / p
@@ -326,7 +399,7 @@ class Handler(BaseHTTPRequestHandler):
                 job = r.submit("upgrade", cmd)
                 self._json(job)
             elif self.path == "/api/audit":
-                job = r.submit("audit", [PY, "-X", "utf8", "cli.py", "audit"])
+                job = r.submit("audit", None)  # 服务内直跑，不走子进程
                 self._json(job)
             else:
                 self._json({"error": "not found"}, 404)
