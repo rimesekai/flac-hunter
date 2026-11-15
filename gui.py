@@ -244,6 +244,15 @@ class Runner:
         job.audit = {"total": job.total, "pass": passed, "fail": failed,
                      "by_issue": by_issue, "files": files_out}
         job.log.append(f"[audit] 完成：通过 {passed}，不合格 {failed}（明细见审计页）")
+        # 持久化最近一次审计结果：服务重启后审计页仍能回显
+        try:
+            out_dir = job.cwd / "tasks" / "gui"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "last_audit.json").write_text(
+                json.dumps({"audit": job.audit, "when": job.started_h, "id": job.id},
+                           ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
 
 
 def _library_counts(music_dir: str) -> dict:
@@ -294,10 +303,16 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # 静默访问日志
         pass
 
+    def _no_cache(self) -> None:
+        """禁止一切缓存：页面与 API 永远拿最新（浏览器曾缓存 v1 页面导致新版打不开）。"""
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+
     def _json(self, obj, code: int = 200) -> None:
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self._no_cache()
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -315,6 +330,7 @@ class Handler(BaseHTTPRequestHandler):
             body = PAGE_HTML.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self._no_cache()
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -331,6 +347,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "no such job"}, 404)
                 return
             self._json(job.snapshot(with_log=True))
+        elif self.path == "/api/audit/last":
+            p = REPO / "tasks" / "gui" / "last_audit.json"
+            if p.exists():
+                try:
+                    self._json(json.loads(p.read_text(encoding="utf-8")))
+                except Exception as e:
+                    self._json({"error": str(e)}, 500)
+            else:
+                self._json({"error": "还没有审计记录"}, 404)
         elif self.path.startswith("/api/tracks"):
             from urllib.parse import parse_qs, urlparse
             qs = parse_qs(urlparse(self.path).query)

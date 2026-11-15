@@ -386,12 +386,17 @@ async function refreshState() {
       `进行中 <span class="live">${running.length}</span>：${TYPE_NAME[running[0].type] || running[0].type}` : "空闲";
     renderJobs(d.jobs);
     if (activeJobId) pollJob();
-    // 自动发现最近一次完成的审计 → 填充审计页
+    // 自动发现最近一次完成的审计 → 填充审计页（内存作业或持久化的 last_audit.json）
     if (!auditData) {
       const last = d.jobs.find(j => j.type === "audit" && j.status === "done");
       if (last) {
         const j = await api("/api/job/" + last.id);
         if (j.audit) showAudit({...j.audit, when: j.started_h});
+      } else {
+        try {
+          const lastSaved = await api("/api/audit/last");
+          showAudit({...lastSaved.audit, when: lastSaved.when});
+        } catch (e) { /* 从未审计过 */ }
       }
     }
   } catch (e) { /* 服务未就绪时静默 */ }
