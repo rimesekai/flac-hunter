@@ -1684,6 +1684,8 @@ def check_z13_cover_lyrics_and_upgrade_repair():
         from flac_hunter.library import AUDIO_EXT
         assert ".mp3" in AUDIO_EXT and ".flac" in AUDIO_EXT
         assert "from_search" in PAGE_HTML and hasattr(_gui.Runner, "_run_prepare_list_search")
+        parsed_rows = _gui.Runner._parse_list_lines("快晴\n夜に駆ける - YOASOBI\n")
+        assert len(parsed_rows) == 2 and parsed_rows[0]["artists"] == [] and parsed_rows[1]["artists"] == ["YOASOBI"]
     finally:
         shutil.rmtree(td, ignore_errors=True)
 

@@ -329,9 +329,19 @@ class Runner:
                 job.log.append(f"[runner] 退出码 {proc.returncode}（台账已记录）")
         job._stop_tail.set()
 
+    @staticmethod
+    def _parse_list_lines(raw_text: str) -> list[dict]:
+        import cli as _cli
+        rows: list[dict] = []
+        for idx, line in enumerate((raw_text or "").splitlines(), 1):
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            rows.append(_cli._list_track_map(s, idx))
+        return rows
+
     def _run_prepare_list_search(self, job: Job) -> None:
         """文本清单含无歌手行时，自动联网搜索多个版本候选并与目标曲库三层查重。"""
-        import cli as _cli
         from flac_hunter.library import LibraryIndex, dedupe_track
         from flac_hunter.upgrade import _netease_search
 
@@ -339,7 +349,7 @@ class Runner:
         music = Path(job.music_dir or cfg.paths.music).expanduser()
         out_path = Path(job.tracks_path or "")
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        raw_tracks = _cli._list_track_map(job.list_text or "")
+        raw_tracks = self._parse_list_lines(job.list_text or "")
         expanded: list[dict] = []
         for t in raw_tracks:
             name = str(t.get("name") or "").strip()
@@ -855,12 +865,11 @@ class Handler(BaseHTTPRequestHandler):
                     cmd = [PY, "-X", "utf8", "cli.py", "prepare",
                            "--uri", str(body["uri"]), "--out", str(out)]
                 elif body.get("list_text"):
-                    import cli as _cli
                     raw_text = str(body["list_text"])
                     out.parent.mkdir(parents=True, exist_ok=True)
                     lst = out.parent / "list.txt"
                     lst.write_text(raw_text, encoding="utf-8")
-                    parsed_rows = _cli._list_track_map(raw_text)
+                    parsed_rows = Runner._parse_list_lines(raw_text)
                     has_bare_title = any(not (row.get("artists") or []) for row in parsed_rows)
                     if has_bare_title:
                         norm_dir = str(Path(prep_dir).expanduser()) if prep_dir else ""
