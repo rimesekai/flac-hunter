@@ -1710,21 +1710,31 @@ def check_z13_cover_lyrics_and_upgrade_repair():
 # ---------- z11. QQ 歌单混合编码解析（评审发现的 Gemini 回归） ----------
 
 
-@check("z11. QQ 响应多解码器竞争：纯 GBK / 纯 UTF-8 两种节点形态都出正确歌名")
+@check("z11. QQ 响应 latin-1 中转修复：GBK/UTF-8/同包混用三种形态都出正确歌名")
 def check_z11_qq_mixed_encoding():
     from flac_hunter.spotify_cli import _parse_qq_response
 
-    # 形态一：整包 GBK（部分缓存节点）——gb18030 解码胜出（utf-8 路径大量 �）
-    raw_gbk = b'{"code":0,"cdlist":[{"songname":"' + "夜明けと蛍".encode("gbk") + b'"}]}'
+    # 形态一：整包 GBK 歌名（部分缓存节点）——真实 schema 是 cdlist[0].songlist[]
+    raw_gbk = (b'{"code":0,"cdlist":[{"songlist":[{"songname":"'
+               + "夜明けと蛍".encode("gbk") + b'"}]}]}')
     songs = _parse_qq_response(raw_gbk)
     assert len(songs) == 1 and songs[0].get("songname") == "夜明けと蛍", songs
 
-    # 形态二：纯 UTF-8（另一部分节点）——严格 UTF-8 即无损，立即采用
-    songs2 = _parse_qq_response('{"code":0,"cdlist":[{"songname":"快晴"}]}'.encode("utf-8"))
+    # 形态二：整包 UTF-8 歌名（另一部分节点）
+    songs2 = _parse_qq_response(
+        '{"code":0,"cdlist":[{"songlist":[{"songname":"快晴"}]}]}'.encode("utf-8"))
     assert len(songs2) == 1 and songs2[0].get("songname") == "快晴", songs2
 
+    # 形态三：同一包里歌名一 GBK 一 UTF-8（真实嵌合体，整包解码必废）
+    raw_mix = (b'{"code":0,"cdlist":[{"songlist":['
+               b'{"songname":"' + "夜明けと蛍".encode("gbk") + b'},'
+               b'{"songname":"' + "快晴".encode("utf-8") + b'"}]}]}')
+    songs3 = _parse_qq_response(raw_mix)
+    names = [s.get("songname") for s in songs3]
+    assert names == ["夜明けと蛍", "快晴"], songs3
+
     # 空歌单/坏包：返回空列表而非抛异常
-    assert _parse_qq_response(b'{"code":0,"cdlist":[]}') == []
+    assert _parse_qq_response(b'{"code":0,"cdlist":[{"songlist":[]}]}') == []
     assert _parse_qq_response(b'not-json') == []
 
 

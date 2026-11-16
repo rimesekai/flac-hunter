@@ -88,36 +88,75 @@ def parse_qq_jsonp(text):
     return json.loads(s)
 
 
+def _cjk_score(s: str) -> int:
+    """中日文字符密度（歌名元数据的语言语境必然是日文/中文）。"""
+    return sum(1 for c in s if "\u3040" <= c <= "\u30ff" or "\u3400" <= c <= "\u9fff")
+
+
+def _fix_mojibake(s: str) -> str:
+    """修复单个字符串的乱码：高位字节还原回原始字节后按 UTF-8 / GB18030 竞争解码。
+
+    GBK 字节对大多恰好也是合法 UTF-8 序列（会「成功」解成希腊/西里尔字母
+    垃圾且无替换符），单看是否解得动无法消歧——按中日文字符密度评分，
+    歌名元数据的语言语境下谁解出的 CJK 多谁赢；平手取 UTF-8。
+    """
+    if not any("\x80" <= c <= "\xff" for c in s):
+        return s  # 纯 ASCII，无需处理
+    raw = s.encode("latin-1", errors="ignore")
+    best = None  # (cjk 数, 文本)；平手取先到的 UTF-8
+    for enc in ("utf-8", "gb18030"):
+        try:
+            fixed = raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+        if "\ufffd" in fixed:
+            continue
+        score = _cjk_score(fixed)
+        if best is None or score > best[0]:
+            best = (score, fixed)
+    if best is None:
+        return raw.decode("gb18030", errors="replace")
+    return best[1]
+
+
+def _deep_fix(obj):
+    """递归修复解析结果里所有字符串的乱码。"""
+    if isinstance(obj, str):
+        return _fix_mojibake(obj)
+    if isinstance(obj, list):
+        return [_deep_fix(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _deep_fix(v) for k, v in obj.items()}
+    return obj
+
+
 def _parse_qq_response(raw: bytes):
     """解析 QQ 歌单响应字节，返回 cdlist[0].songlist（可能为空列表）。
 
-    实测 QQ 不同缓存节点返回不同编码：纯 UTF-8、纯 GBK、混合（UTF-8 骨架
-    + GBK 用户字段）都出现过——任何固定顺序都会踩中某一种。因此三个解码
-    器都试，要求 JSON 可解析且 songlist 非空，按解码文本中 U+FFFD（替换符）
-    最少者胜出：GBK 字节在 UTF-8 replace 下会大量变 �，而正确的编码几乎
-    不产生替换符。
+    主路径：latin-1 解码（字节与字符一一对应，JSON 结构绝对完整，不受内容
+    编码影响）→ 解析成功后逐字符串按 UTF-8/GB18030 修复乱码——同包混用
+    两种编码也能各自还原。备用路径：latin-1 结构解析失败才退回多解码竞争。
     """
-    decoders = (
-        lambda: raw.decode("utf-8"),
+    try:
+        text = raw.decode("latin-1")
+        qq = parse_qq_jsonp(text)
+        songs = (qq.get("cdlist") or [{}])[0].get("songlist") or []
+        if songs:
+            return _deep_fix(songs)
+    except Exception:
+        pass
+    for decode in (
         lambda: raw.decode("utf-8", errors="replace"),
         lambda: raw.decode("gb18030", errors="replace"),
-    )
-    best = None  # (fffd 数, songlist)
-    for decode in decoders:
+    ):
         try:
-            text = decode()
-            qq = parse_qq_jsonp(text)
+            qq = parse_qq_jsonp(decode())
             songs = (qq.get("cdlist") or [{}])[0].get("songlist") or []
-            if not songs:
-                continue
-            fffd = text.count("\ufffd")
-            if best is None or fffd < best[0]:
-                best = (fffd, songs)
-            if fffd == 0:
-                return songs  # 无替换符 = 无损解码，直接采用
+            if songs:
+                return songs
         except Exception:
             continue
-    return best[1] if best else []
+    return []
 
 
 def fetch_qq_playlist(disstid):
