@@ -1681,6 +1681,8 @@ def check_z13_cover_lyrics_and_upgrade_repair():
         (td / "Alice in 冷凍庫（翻唱） - 花谱 _ kaf.mp3").write_bytes(b"b")
         cands = find_dups_candidates(td)
         assert len(cands) == 1 and len(cands[0]["members"]) == 2
+        from flac_hunter.library import AUDIO_EXT
+        assert ".mp3" in AUDIO_EXT and ".flac" in AUDIO_EXT
     finally:
         shutil.rmtree(td, ignore_errors=True)
 

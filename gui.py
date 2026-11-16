@@ -851,6 +851,7 @@ class Handler(BaseHTTPRequestHandler):
                 job = r.submit("audit", None, music_dir=aud_dir, audit_files=aud_files)  # 服务内直跑，不走子进程
                 self._json(job)
             elif self.path == "/api/dedupe/delete":
+                from flac_hunter.library import AUDIO_EXT
                 from flac_hunter.util import cross_move
                 raw_dir = str(body.get("music_dir") or "").strip()
                 if "\x00" in raw_dir:
