@@ -60,3 +60,14 @@ example_artist = ["示例别名"]
 title = "Example Title"
 artist = "Example Artist"
 alts = ["示例曲名"]
+
+# ---------- [cookies] 登录态配置（私密歌单支持） ----------
+# prepare 拉 netease:/qq: 歌单时若此处非空，请求会带上 Cookie 头（原样透传，不做解析改写），
+# 用于读取私密/收藏歌单；两处默认空 = 匿名行为，与未配置时完全一致。
+# netease：可填完整 Cookie 串（浏览器 DevTools 复制整行），或只填 MUSIC_U=…（登录凭证）
+#   两种填法都原样作 Cookie 头发送，网易云两种都认。
+# qq：填完整 Cookie 串（y.qq.com 登录后的 Cookie；空串则匿名拉公开歌单）。
+# 注意：本文件是示例；真实值请写进 config.toml（被 .gitignore 挡住不入库），不要提交。
+[cookies]
+netease = ''
+qq = ''

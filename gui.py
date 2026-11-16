@@ -84,7 +84,12 @@ class Job:
         self.audit: dict | None = None          # 审计作业的全量结构化结果
         self.paused = False                     # 逐曲下载：干完当前首后停下
         self.skip_requested = False             # 逐曲下载：终止当前首、开下一首
+        self.cancel_requested = False           # 取消请求：逐曲/子进程/审计三类作业协作检查（POST /api/job/<id>/cancel）
+        self.cancelled = False                  # 已受理取消（snapshot 顶层 "cancelled"，字段名冻结）
+        self.cancelled_remaining = 0            # 取消时剩余未处理曲目数（snapshot 顶层 "cancelled_remaining"）
         self.current = None                     # 正在处理的曲目
+        self.current_proc = None                # 当前子进程引用：取消端点直接终止，避免 readline 阻塞期无法响应
+        self._started_tracks = 0                # 已发出子进程的曲目数（计算取消剩余 cancelled_remaining）
         self._res_offset = 0
         res = cwd / "tasks" / "results.jsonl"
         if res.exists():
@@ -102,6 +107,8 @@ class Job:
             "status_counts": dict(self.status_counts),
             "audit": self.audit,
             "paused": self.paused, "current": self.current,
+            "cancelled": self.cancelled,
+            "cancelled_remaining": self.cancelled_remaining,
         }
         if with_log:
             d["log_tail"] = list(self.log)[max(0, len(self.log) - LOG_TAIL):]
@@ -175,6 +182,13 @@ class Runner:
                 time.sleep(0.4)
                 continue
             job = self.jobs[jid]
+            if job.cancelled:
+                # 已取消的排队作业：取出时直接跳过执行（契约①：queued 取消 → 不再开工）
+                job.status = "cancelled"
+                job.summary = "已取消（未执行）"
+                job.ended = time.time()
+                job._stop_tail.set()
+                continue
             job.status = "running"
             try:
                 if job.type == "audit":
@@ -191,16 +205,23 @@ class Runner:
                         job.exit_code = 0
                 else:
                     self._run_subproc(job)
-                job.status = "done" if job.exit_code == 0 else "error"
+                if job.cancelled:
+                    job.status = "cancelled"
+                else:
+                    job.status = "done" if job.exit_code == 0 else "error"
                 if job.audit:
                     job.summary = (f"{job.audit['total']} 个 FLAC："
                                    f"通过 {job.audit['pass']} · 不合格 {job.audit['fail']}")
+                    if job.cancelled:
+                        job.summary += "（已取消，保留已完成部分）"
                 elif job.status_counts:
-                    job.summary = "完成 · " + " ".join(
+                    job.summary = ("已取消 · " if job.cancelled else "完成 · ") + " ".join(
                         f"{k}:{v}" for k, v in sorted(job.status_counts.items()))
+                elif job.cancelled:
+                    job.summary = "已取消"
                 else:
                     job.summary = "完成" if job.exit_code == 0 else f"失败 exit={job.exit_code}"
-                if job.exit_code != 0:
+                if job.exit_code != 0 and not job.cancelled:
                     job.summary += "（看日志末尾找原因）"
             except Exception as e:  # noqa: BLE001
                 job.status = "error"
@@ -219,8 +240,13 @@ class Runner:
         proc = subprocess.Popen(
             job.cmd, cwd=str(job.cwd), env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        job.current_proc = proc
         assert proc.stdout is not None
         for raw in iter(proc.stdout.readline, b""):
+            if job.cancel_requested:
+                # 契约②：子进程作业取消 → 终止进程并 wait（取消端点同时已 kill，此处兜底）
+                _kill_proc_tree(proc)
+                break
             line = raw.decode("utf-8", "replace").rstrip("\r\n")
             if line:
                 job.log.append(line)
@@ -243,6 +269,7 @@ class Runner:
                         counts["failed"] = fail_n
                     job.status_counts = counts
         proc.wait()
+        job.current_proc = None
         job.exit_code = proc.returncode
         job._stop_tail.set()
 
@@ -272,29 +299,37 @@ class Runner:
         except OSError:
             pass
 
+    def _cancel_rest(self, job: Job, rest: list) -> None:
+        """取消收尾（契约①）：剩余未开工曲目逐条补 cancelled 台账，与 skip 补台账同范式。"""
+        for t in rest:
+            self._append_ledger(job, t, "cancelled")
+        if rest:
+            job.log.append(f"[runner] 已取消：剩余 {len(rest)} 首补写 cancelled 台账")
+
     def _run_download_pertrack(self, job: Job) -> None:
         """逐曲模式：每首歌一个 --only 子进程。
 
-        暂停 = 干完当前首后不再开下一首；跳过 = 立即终止当前首、开下一首。
+        暂停 = 干完当前首后不再开下一首；跳过 = 立即终止当前首、开下一首；
+        取消 = 终止当前首 + 停止发新曲，剩余曲目逐条补 cancelled 台账。
         断点续跑由 results.jsonl 的 downloaded 台账天然支持。
         """
         n = len(job.tracks_list)
-        job.log.append(f"[runner] 逐曲模式：共 {n} 首（支持 ⏸ 暂停 / ⏭ 跳过）")
+        job.log.append(f"[runner] 逐曲模式：共 {n} 首（支持 ⏸ 暂停 / ⏭ 跳过 / ⏹ 取消）")
         t_tail = threading.Thread(target=_tail_results, args=(job,), daemon=True)
         t_tail.start()
         for i, t in enumerate(job.tracks_list):
-            # 暂停/跳过闸门：当前没有子进程在跑，点跳过直接略过这首
-            skipped_now = False
+            # 暂停/跳过/取消闸门：当前没有子进程在跑时的状态处理
             while True:
-                if job.skip_requested:
-                    job.skip_requested = False
-                    skipped_now = True
-                    break
-                if not job.paused:
+                if job.cancel_requested or job.skip_requested or not job.paused:
                     break
                 job.summary = "已暂停（点「继续」恢复）"
                 time.sleep(0.5)
-            if skipped_now:
+            if job.cancel_requested:
+                # 契约①：停止发新曲，未开工曲目（含当前这首）逐条补 cancelled 台账
+                self._cancel_rest(job, job.tracks_list[i:])
+                break
+            if job.skip_requested:
+                job.skip_requested = False
                 job.log.append(f"[runner] 已跳过：{t.get('name')}")
                 self._append_ledger(job, t, "skipped")
                 continue
@@ -308,10 +343,12 @@ class Runner:
             proc = subprocess.Popen(self._download_cmd(job, only_key),
                                     cwd=str(job.cwd),
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            job.current_proc = proc
+            job._started_tracks += 1
             assert proc.stdout is not None
             killed = False
             for raw in iter(proc.stdout.readline, b""):
-                if job.skip_requested:
+                if job.skip_requested or job.cancel_requested:
                     _kill_proc_tree(proc)
                     killed = True
                     break
@@ -320,11 +357,17 @@ class Runner:
                     job.log.append(line)
             proc.wait()
             job.current = None
+            job.current_proc = None
+            if not killed and job.cancel_requested and proc.returncode != 0:
+                # 取消请求到达时子进程恰好静默无输出：stdout EOF 直接结束循环，
+                # kill 已由取消端点对 job.current_proc 完成，这里补终止语义
+                killed = True
             if killed:
-                # 等台账尾巴追上来；确认这条曲没有台账记录才补 skipped
+                # 等台账尾巴追上来；确认这条曲没有台账记录才补 skipped/cancelled
                 time.sleep(1.3)
                 if job.done == before:
-                    self._append_ledger(job, t, "skipped")
+                    self._append_ledger(job, t,
+                                        "cancelled" if job.cancel_requested else "skipped")
             elif proc.returncode != 0:
                 job.log.append(f"[runner] 退出码 {proc.returncode}（台账已记录）")
         job._stop_tail.set()
@@ -465,6 +508,10 @@ class Runner:
         by_issue: dict = {}
         files_out: list = []
         for f in files:
+            if job.cancel_requested:
+                # 契约③：audit 取消 → 逐文件协作检查，break 后已完成部分保留在 job.audit
+                job.log.append(f"[audit] 已取消：完成 {job.done}/{len(files)}，保留已完成结果")
+                break
             try:
                 r = audit_one(str(f), **kwargs)
             except TypeError:
@@ -525,6 +572,29 @@ def _library_counts(music_dir: str) -> dict:
     except OSError:
         pass
     return {"total": total, **counts}
+
+
+def _lyric_issue_text(kind: str, entry) -> str:
+    """把 check_lyrics_dir（audit.py:447）的单条目渲染为人类可读 issue 串。
+
+    纯展示包装，不改判定逻辑；条目形态随 kind 而异（audit.py:478-518）：
+    orphan/empty/no_timestamps 为 lrc 文件名 str；meta_title/meta_artist 为
+    (lrc名, 元数据值, 音频段) 元组；too_long/too_short 为 (lrc名, 末行秒, 音频秒)
+    元组（单位秒，audit.py:512-514）；dup_content 为重复文件名列表。
+    """
+    if kind in ("orphan", "empty", "no_timestamps"):
+        return f"{kind}: {entry}"
+    if kind == "meta_title":
+        return f"meta_title: lrc ti={entry[1]} ≠ 音频标题 {entry[2]}"
+    if kind == "meta_artist":
+        return f"meta_artist: lrc ar={entry[1]} ≠ 音频歌手 {entry[2]}"
+    if kind == "too_long":
+        return f"too_long: 末行 {entry[1]}s > 音频 {entry[2]}s"
+    if kind == "too_short":
+        return f"too_short: 末行 {entry[1]}s << 音频 {entry[2]}s"
+    if kind == "dup_content":
+        return "dup_content: " + "/".join(str(x) for x in entry) + " 内容重复"
+    return f"{kind}: {entry}"
 
 
 def _kill_proc_tree(proc: subprocess.Popen) -> None:
@@ -824,6 +894,121 @@ class Handler(BaseHTTPRequestHandler):
                 "total_groups": len(enriched),
                 "total_files": sum(len(g["members"]) for g in enriched),
             })
+        elif self.path.startswith("/api/library/files"):
+            # 曲库音频文件索引（侧车 .jpg/.lrc 与子目录不计，口径同 _library_counts）
+            from flac_hunter.library import AUDIO_EXT  # library.py:21
+            qs = parse_qs(urlparse(self.path).query)
+            mdir = Path(str(self.runner.cfg.paths.music)).expanduser()
+            if not mdir.is_dir():
+                self._json({"error": f"目录不存在: {mdir}"}, 400)
+                return
+            q = (qs.get("q", [""])[0] or "").strip().lower()
+            ext = (qs.get("ext", [""])[0] or "").strip().lower().lstrip(".")
+            try:
+                page = max(1, int(qs.get("page", ["1"])[0] or 1))
+            except ValueError:
+                page = 1
+            try:
+                page_size = int(qs.get("page_size", ["50"])[0] or 50)
+            except ValueError:
+                page_size = 50
+            page_size = min(max(1, page_size), 500)  # 上限 500（契约冻结）
+            files: list[dict] = []
+            try:
+                for e in os.scandir(mdir):
+                    if not e.is_file():
+                        continue
+                    suf = Path(e.name).suffix.lower().lstrip(".")
+                    if f".{suf}" not in AUDIO_EXT:
+                        continue
+                    if q and q not in e.name.lower():
+                        continue  # q = 文件名大小写不敏感子串过滤
+                    if ext and suf != ext:
+                        continue  # ext = 小写格式过滤（兼容 ".mp3" 传参）
+                    try:
+                        st = e.stat()
+                    except OSError:
+                        continue
+                    # 单位纪律：size_mb = 字节 / 1048576 保留 1 位；mtime 精确到分
+                    files.append({
+                        "name": e.name, "ext": suf,
+                        "size_mb": round(st.st_size / 1048576, 1),
+                        "mtime_h": time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime)),
+                    })
+            except OSError:
+                pass
+            files.sort(key=lambda d: d["name"].lower())  # 文件名不区分大小写排序
+            start = (page - 1) * page_size
+            self._json({"music_dir": str(mdir), "total": len(files),
+                        "page": page, "page_size": page_size,
+                        "files": files[start:start + page_size]})
+        elif self.path.startswith("/api/lyrics/report"):
+            # 包装 audit.py:447 check_lyrics_dir 八类歌词体检 → 结构化分组（纯包装，不加判定）
+            from flac_hunter.audit import check_lyrics_dir
+            mdir = str(self.runner.cfg.paths.music)
+            if not Path(mdir).expanduser().is_dir():
+                self._json({"error": f"目录不存在: {mdir}"}, 400)
+                return
+            raw = check_lyrics_dir(mdir, self.runner.cfg)
+            groups = []
+            total = 0
+            for kind in ("orphan", "meta_title", "meta_artist", "too_long",
+                         "too_short", "dup_content", "empty", "no_timestamps"):
+                files = []
+                for e in (raw.get(kind) or []):
+                    if isinstance(e, (list, tuple)):
+                        name = str(e[0]) if e else ""  # 元组/列表统一取 lrc 文件名（首元素）
+                    else:
+                        name = str(e)
+                    files.append({"name": name, "issue": _lyric_issue_text(kind, e)})
+                groups.append({"kind": kind, "count": len(files), "files": files})
+                total += len(files)
+            self._json({"music_dir": mdir, "total": total, "groups": groups})
+        elif self.path.startswith("/api/rename/scan"):
+            # 包装 audit.py:161 scan_rename（dry-run 计划）→ [{old,new,kinds}]，不自加匹配逻辑
+            from flac_hunter.audit import scan_rename
+            mdir = str(self.runner.cfg.paths.music)
+            if not Path(mdir).expanduser().is_dir():
+                self._json({"error": f"目录不存在: {mdir}"}, 400)
+                return
+            plans = scan_rename(mdir, self.runner.cfg)
+            items = [{"old": p.get("old"),
+                      "new": p.get("new") or p.get("proposal"),
+                      "kinds": [str(k) for k in (p.get("issues") or [])]}
+                     for p in plans if isinstance(p, dict)]
+            self._json(items)
+        elif self.path.startswith("/api/fingerprint"):
+            # 包装 ffmpeg.py:147 pcm_md5（stdout 形如 "MD5=hex"）→ {a_md5,b_md5,match}
+            from flac_hunter.ffmpeg import pcm_md5
+            qs = parse_qs(urlparse(self.path).query)
+            a = (qs.get("a", [""])[0] or "").strip()
+            b = (qs.get("b", [""])[0] or "").strip()
+            if not a or not b:
+                self._json({"error": "缺少 a/b 两个音频路径参数"}, 400)
+                return
+            pa, pb = Path(a).expanduser(), Path(b).expanduser()
+            if not pa.is_file():
+                self._json({"error": f"文件不存在: {a}"}, 400)
+                return
+            if not pb.is_file():
+                self._json({"error": f"文件不存在: {b}"}, 400)
+                return
+            try:
+                ra, rb = pcm_md5(str(pa)), pcm_md5(str(pb))
+            except Exception as exc:  # noqa: BLE001
+                self._json({"error": f"指纹计算失败: {str(exc)[:200]}"}, 400)
+                return
+
+            def _md5_clean(s: str) -> str:
+                """剥 "MD5=" 前缀与空白 → 32 位小写 hex。"""
+                s = str(s or "").strip()
+                if s.upper().startswith("MD5="):
+                    s = s[len("MD5="):]
+                return s.strip().lower()
+
+            ma, mb = _md5_clean(ra), _md5_clean(rb)
+            self._json({"a_md5": ma, "b_md5": mb,
+                        "match": bool(ma and mb and ma == mb)})
         elif self.path == "/api/audit/last":
             p = REPO / "tasks" / "gui" / "last_audit.json"
             if p.exists():
@@ -957,6 +1142,26 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("仅下载作业支持跳过")
                 job.skip_requested = True
                 self._json(job.snapshot())
+            elif self.path.endswith("/cancel") and self.path.startswith("/api/job/"):
+                # 契约①：取消作业（逐曲=停发新曲+终止当前曲+剩余补 cancelled 台账；
+                # 子进程=terminate；audit=协作标志逐文件检查；queued=取出时跳过）
+                jid = self.path.split("/")[3]
+                job = r.jobs.get(jid)
+                if job is None:
+                    raise ValueError(f"作业不存在: {jid}")
+                if job.ended is not None:
+                    raise ValueError("作业已结束，无法取消")
+                job.cancel_requested = True
+                job.cancelled = True
+                tracks = job.tracks_list or []
+                # 被终止的当前曲也会补一条 cancelled 台账，计入剩余口径
+                inflight = 1 if job.current_proc is not None else 0
+                job.cancelled_remaining = max(0, len(tracks) - job._started_tracks + inflight)
+                proc = job.current_proc
+                if proc is not None and proc.poll() is None:
+                    # 立即终止当前子进程：readline 阻塞期也能生效（EOF 唤醒作业线程）
+                    _kill_proc_tree(proc)
+                self._json(job.snapshot())
             elif self.path == "/api/audit":
                 aud_dir = str(body.get("music_dir") or "").strip()
                 if "\x00" in aud_dir:
@@ -1006,6 +1211,106 @@ class Handler(BaseHTTPRequestHandler):
                     "errors": errs,
                     "library": _library_counts(r.cfg.paths.music),
                 })
+            elif self.path == "/api/lyrics/delete":
+                # 契约④：{files:[绝对路径]} → cross_move 移入 staging/lrc_trash/<ts>/（可恢复，绝不 unlink）
+                from flac_hunter.util import cross_move  # util.py:99
+                raw_files = body.get("files")
+                if not isinstance(raw_files, list) or not raw_files:
+                    raise ValueError("请提供要删除的 .lrc 文件路径列表")
+                trash_dir = Path(r.cfg.paths.staging) / "lrc_trash" / time.strftime("%Y%m%d_%H%M%S")
+                mdir_res = Path(str(r.cfg.paths.music)).expanduser().resolve()
+                moved: list[str] = []
+                failed: list[str] = []
+                for item in raw_files:
+                    p = Path(str(item or "").strip())
+                    try:
+                        if not p.name or not p.is_absolute():
+                            failed.append(f"非绝对路径: {p.name or item}")
+                            continue
+                        if p.suffix.lower() != ".lrc":
+                            failed.append(f"非 .lrc 文件: {p.name}")
+                            continue
+                        if not p.is_file():
+                            failed.append(f"文件不存在: {p.name}")
+                            continue
+                        if p.resolve().parent != mdir_res:
+                            # 曲库边界：只允许移曲库顶层的 .lrc（与 dedupe/delete 同范式）
+                            failed.append(f"越界（仅限曲库目录）: {p.name}")
+                            continue
+                        trash_dir.mkdir(parents=True, exist_ok=True)
+                        # 同名不覆盖：trash 内已存在则加序号（可恢复铁律，绝不静默覆盖副本）
+                        dest = trash_dir / p.name
+                        k = 1
+                        while dest.exists():
+                            dest = trash_dir / f"{p.stem}_{k}{p.suffix}"
+                            k += 1
+                        cross_move(p, dest)
+                        moved.append(p.name)
+                    except Exception as exc:  # noqa: BLE001
+                        failed.append(f"{p.name}: {str(exc)[:120]}")
+                self._json({"moved": moved, "failed": failed,
+                            "trash_dir": str(trash_dir) if moved else ""})
+            elif self.path == "/api/rename/apply":
+                # 契约⑥：{items:[{old,new}]} → audit.py:183 apply_rename（改名+sidecar 同步，目标已存在则跳过）
+                from flac_hunter.audit import apply_rename
+                from flac_hunter.library import AUDIO_EXT  # library.py:21
+                raw_items = body.get("items")
+                if not isinstance(raw_items, list) or not raw_items:
+                    raise ValueError("请提供重命名计划 items")
+                mdir = Path(str(r.cfg.paths.music)).expanduser()
+                if not mdir.is_dir():
+                    raise ValueError(f"目录不存在: {mdir}")
+
+                def _has_stem(stem: str) -> bool:
+                    return any(q.is_file() and q.stem == stem and q.suffix.lower() in AUDIO_EXT
+                               for q in mdir.iterdir())
+
+                # 预检：old 已无音频而 new 已被占用（重放已应用计划）→ 与 apply_rename 的
+                # 「目标已存在→skip/name exists」语义对齐（audit.py:230-231），直接产出记录
+                records: list = [None] * len(raw_items)
+                deferred_idx: list[int] = []
+                deferred_plans: list[dict] = []
+                for idx, it in enumerate(raw_items):
+                    if not isinstance(it, dict):
+                        records[idx] = {"old": "", "new": "", "status": "skip", "detail": "非法计划项"}
+                        continue
+                    old = str(it.get("old") or "").strip()
+                    new = str(it.get("new") or it.get("proposal") or "").strip()
+                    if not old or not new:
+                        records[idx] = {"old": old, "new": new, "status": "skip",
+                                        "detail": "计划项缺 old/new"}
+                        continue
+                    if Path(new).name != new:
+                        # new 含路径分隔符/盘符：apply_rename 会在中途抛错留下无痕半成品，
+                        # 预检直接拒绝该项（不阻断其余项）
+                        records[idx] = {"old": old, "new": new, "status": "skip",
+                                        "detail": "new 含路径分隔符，已拒绝"}
+                        continue
+                    if old and old != new and not _has_stem(old) and _has_stem(new):
+                        records[idx] = {"old": old, "new": new,
+                                        "status": "skip", "detail": "name exists"}
+                        continue
+                    deferred_idx.append(idx)
+                    deferred_plans.append({"old": old, "new": new})
+                # 去重计划后送 apply_rename：其对重复计划/renamed_olds 分支可能少产记录，
+                # 裸 zip 会错配——按 (old,new) 键回填，短少时 skip 占位补齐
+                uniq_keys: list = []
+                for plan in deferred_plans:
+                    key = (str(plan.get("old") or ""), str(plan.get("new") or ""))
+                    if key not in uniq_keys:
+                        uniq_keys.append(key)
+                recs = apply_rename(r.cfg, [{"old": k[0], "new": k[1]} for k in uniq_keys]) \
+                    if uniq_keys else []
+                rec_by_key: dict = {}
+                for key, rec in zip(uniq_keys, recs):
+                    if isinstance(rec, dict):
+                        rec_by_key.setdefault(key, rec)
+                for idx, plan in zip(deferred_idx, deferred_plans):
+                    key = (str(plan.get("old") or ""), str(plan.get("new") or ""))
+                    records[idx] = rec_by_key.get(key) or {
+                        "old": plan.get("old"), "new": plan.get("new"),
+                        "status": "skip", "detail": "apply_rename 未返回记录"}
+                self._json({"records": [rec for rec in records if rec is not None]})
             elif self.path == "/api/config/music-dir":
                 raw_dir = str(body.get("music_dir") or "").strip()
                 if not raw_dir or "\x00" in raw_dir:
@@ -1026,6 +1331,10 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     cfg = load_config()
+    # 相对路径/含 ~ 的配置统一展开为绝对路径：所有端点与 apply_rename 共用同一基准
+    # （此前 music_dir 为相对值时歌词删除链路整体不可用——独立审查 M3）
+    cfg.paths.music = str(Path(cfg.paths.music).expanduser().resolve())
+    cfg.paths.staging = str(Path(cfg.paths.staging).expanduser().resolve())
     url = f"http://127.0.0.1:{args.port}"
 
     class H(Handler):

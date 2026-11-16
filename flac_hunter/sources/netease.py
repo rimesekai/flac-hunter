@@ -128,8 +128,25 @@ def parse_artist_songs(payload: Any, artist_name: str = "") -> list:
     return out
 
 
-def _default_http(url: str, timeout: int = 20) -> str:
-    return http_get(url, ua=CHROME_UA, referer=NETEASE_REFERER, timeout=timeout)
+def _default_http(url: str, timeout: int = 20, cookie: str | None = None) -> str:
+    """默认 HTTP：cookie 非空时附带 Cookie 头（util._headers util.py:24-31 空 cookie 天然无头）。"""
+    return http_get(url, ua=CHROME_UA, referer=NETEASE_REFERER,
+                    cookie=cookie or None, timeout=timeout)
+
+
+def _cfg_cookie(cfg: Any, key: str) -> str:
+    """从 Config dataclass 或 dict 读取 cookies.<key>（模仿 gdstudio._cfg_rate 双形态，gdstudio.py:53-63）。
+
+    None -> ""；dataclass 取 getattr(cfg, "cookies")；dict 取 cfg.get("cookies")；
+    值非 str 回退 ""——沿用 config.py「缺失/类型不符回退默认、绝不抛错」的性格（config.py:83）。
+    """
+    if cfg is None:
+        return ""
+    cookies = cfg.get("cookies") if isinstance(cfg, dict) else getattr(cfg, "cookies", None)
+    if cookies is None:
+        return ""
+    val = cookies.get(key) if isinstance(cookies, dict) else getattr(cookies, key, None)
+    return val if isinstance(val, str) else ""
 
 
 def parse_artist_search(payload: Any) -> list:
@@ -198,11 +215,12 @@ def parse_playlist_payload(payload: Any) -> list:
     return out
 
 
-def fetch_playlist(playlist_id, timeout: int = 20) -> list:
-    """匿名拉取公开歌单曲目（music.163.com/api/playlist/detail?id=）；失败返回 []。"""
+def fetch_playlist(playlist_id, timeout: int = 20, cookie: str | None = None) -> list:
+    """拉取歌单曲目（music.163.com/api/playlist/detail?id=）；cookie 非空带登录态可读私密歌单，失败返回 []。"""
     url = NETEASE_BASE + "/api/playlist/detail?" + urllib.parse.urlencode({"id": playlist_id})
     try:
-        raw = http_get(url, ua=CHROME_UA, referer=NETEASE_REFERER, timeout=timeout)
+        raw = http_get(url, ua=CHROME_UA, referer=NETEASE_REFERER,
+                       cookie=cookie or None, timeout=timeout)
         return parse_playlist_payload(raw)
     except Exception:
         return []
@@ -218,14 +236,15 @@ class NeteaseSource:
         self.cfg = cfg if cfg is not None else {}
         self._http_fn = http_fn  # 可注入假 http 供离线测试
         self._min_interval = _cfg_rate(cfg, "netease_min_interval", NETEASE_MIN_INTERVAL)
+        self._cookie = _cfg_cookie(cfg, "netease")  # [cookies].netease 登录态（upgrade.py:146 以 Config 构造）
         self.last_throttle_calls = 0
 
     def _get(self, url: str, timeout: int = 20) -> str:
         if self._http_fn is not None:
-            return self._http_fn(url, timeout)
+            return self._http_fn(url, timeout)  # 注入 http_fn 的调用签名不动（z7 依赖）
         netease_throttle(min_interval=self._min_interval)
         self.last_throttle_calls += 1
-        return _default_http(url, timeout)
+        return _default_http(url, timeout, cookie=self._cookie or None)
 
     def search(self, track: dict) -> list:
         """type=1 单曲搜索（Referer: https://music.163.com/）；失败返回 []。"""

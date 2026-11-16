@@ -1019,6 +1019,12 @@ button, input, select, textarea {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+/* 新视图用 fc- 前缀的数字列等价类（is-num 为既有历史修饰类） */
+.fc-table thead th.fc-num,
+.fc-table tbody td.fc-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 .fc-table tbody td {
   padding: 8px 10px;
   vertical-align: middle;
@@ -1143,6 +1149,94 @@ button, input, select, textarea {
   color: var(--fc-on-surface-variant);
   font-size: 12.5px;
   margin-top: 8px;
+}
+
+/* ---------- Library / Lyrics / Rename / Fingerprint 工具视图 ---------- */
+.fc-page-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.fc-lyr-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  font-weight: 600;
+  min-height: 24px;
+}
+.fc-lyr-group > summary::-webkit-details-marker { display: none; }
+.fc-lyr-group > summary::after {
+  content: "▾";
+  margin-inline-start: auto;
+  color: var(--fc-on-surface-variant);
+  transition: transform var(--fc-duration-fast) var(--fc-ease-standard);
+}
+.fc-lyr-group[open] > summary::after { transform: rotate(180deg); }
+.fc-lyr-group.is-zero { opacity: 0.55; }
+.fc-lyr-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.fc-lyr-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background-color: var(--fc-surface-block);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.fc-lyr-file:hover { background-color: var(--fc-surface-inset); }
+.fc-lyr-file input { flex: none; }
+.fc-lyr-file__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--fc-font-mono);
+  font-size: 12px;
+}
+.fc-ren-item { flex-wrap: wrap; }
+.fc-ren-path {
+  font-family: var(--fc-font-mono);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 160px;
+}
+.fc-ren-arrow {
+  color: var(--fc-primary);
+  font-weight: 700;
+  flex: none;
+}
+.fc-ren-result-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12.5px;
+  flex-wrap: wrap;
+}
+.fc-fp-md5 {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--fc-font-mono);
+  font-size: 12.5px;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  text-align: end;
 }
 
 /* ---------- Theme Popover & Toast ---------- */
@@ -1384,6 +1478,31 @@ button, input, select, textarea {
           <rect x="3" y="4" width="13" height="13" rx="2"/><path d="M8 20h10a2 2 0 0 0 2-2V8"/>
         </svg>
         <span data-i18n="nav.dedupe">曲库查重</span>
+      </button>
+      <button type="button" class="fc-nav-item" data-tab="library">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 4h3v16H4z"/><path d="M10.5 4h3v16h-3z"/><path d="M17.2 4.4l2.9.8-3.3 14.6-2.9-.8z"/>
+        </svg>
+        <span data-i18n="nav.library">曲库浏览</span>
+      </button>
+      <button type="button" class="fc-nav-item" data-tab="lyrics">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
+          <polyline points="14 3 14 9 20 9"/><line x1="8" y1="14" x2="16" y2="14"/><line x1="8" y1="17.5" x2="12.5" y2="17.5"/>
+        </svg>
+        <span data-i18n="nav.lyrics">歌词体检</span>
+      </button>
+      <button type="button" class="fc-nav-item" data-tab="rename">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>
+        </svg>
+        <span data-i18n="nav.rename">改名工具</span>
+      </button>
+      <button type="button" class="fc-nav-item" data-tab="fingerprint">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 12a6 6 0 0 1 12 0c0 3.5-.9 5-.9 8"/><path d="M9.5 13.5A2.5 2.5 0 0 1 12 11a2.5 2.5 0 0 1 2.5 2.5c0 2-.5 3-.5 5.5"/><path d="M12 15v4"/>
+        </svg>
+        <span data-i18n="nav.fingerprint">指纹对比</span>
       </button>
       <button type="button" class="fc-nav-item" data-tab="jobs">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1643,11 +1762,13 @@ button, input, select, textarea {
           <div class="fc-card-header__start">
             <h2 id="joblog-title" class="fc-card-header__title" data-i18n="jobs.logTitle">作业日志</h2>
             <span id="dlpct" class="fc-chip fc-chip--primary fc-tabular"></span>
+            <span id="job-cancelled-chip" class="fc-chip fc-chip--warn" hidden></span>
           </div>
           <div class="fc-row" style="gap:6px;">
             <button type="button" class="fc-btn fc-btn--sm" id="btn-copy-log" data-i18n="jobs.copyLog">复制日志</button>
             <button type="button" class="fc-btn fc-btn--sm" id="btn-pause" hidden>⏸ 暂停</button>
             <button type="button" class="fc-btn fc-btn--sm fc-btn--danger" id="btn-skip" hidden data-i18n="jobs.skipTrack">⏭ 跳过这首</button>
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--danger" id="btn-cancel" hidden data-i18n="jobs.cancel">⏹ 取消</button>
           </div>
         </div>
         <div class="fc-segmented-bar" id="dlbar-wrap" style="margin-bottom:10px;">
@@ -1842,6 +1963,143 @@ button, input, select, textarea {
         </div>
       </article>
     </section>
+
+    <!-- VIEW 5: 曲库浏览 -->
+    <section id="tab-library" class="fc-view" data-view="library" hidden>
+      <article class="fc-card">
+        <div class="fc-card-header">
+          <div class="fc-card-header__start">
+            <h2 class="fc-card-header__title" data-i18n="lib.title">曲库浏览</h2>
+            <span class="fc-card-header__sub" data-i18n="lib.sub">按文件名与格式检索曲库音频文件</span>
+          </div>
+          <span id="lib-summary" class="fc-chip fc-tabular" data-i18n="lib.notLoaded">未载入</span>
+        </div>
+        <div class="fc-row" style="gap:8px;margin-bottom:12px;">
+          <label class="fc-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="search" id="lib-q" placeholder="搜索文件名…" data-i18n-ph="lib.searchPh">
+          </label>
+          <select id="lib-ext" class="fc-select" aria-label="按格式筛选" data-i18n-aria="lib.extAria">
+            <option value="" data-i18n="lib.extAll">全部格式</option>
+            <option value="flac">flac</option>
+            <option value="mp3">mp3</option>
+            <option value="ogg">ogg</option>
+            <option value="m4a">m4a</option>
+            <option value="opus">opus</option>
+            <option value="wav">wav</option>
+          </select>
+          <select id="lib-page-size" class="fc-select" aria-label="每页数量" data-i18n-aria="lib.pageSizeAria">
+            <option value="50">50</option>
+            <option value="100" selected>100</option>
+            <option value="200">200</option>
+          </select>
+          <button type="button" class="fc-btn fc-btn--sm fc-btn--primary" id="btn-lib-load" data-i18n="lib.btnLoad">载入曲库</button>
+        </div>
+        <div class="fc-table-wrap" tabindex="0" role="region" aria-label="曲库文件列表" data-i18n-aria="lib.tableAria">
+          <table id="lib-files" class="fc-table fc-table--responsive">
+            <caption data-i18n="lib.tableCap">曲库音频文件索引</caption>
+            <thead>
+              <tr>
+                <th data-i18n="lib.colName">文件名</th>
+                <th style="width:84px;" data-i18n="lib.colExt">格式</th>
+                <th style="width:110px;" class="fc-num" data-i18n="lib.colSize">大小 (MB)</th>
+                <th style="width:150px;" data-i18n="lib.colMtime">修改时间</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="fc-page-bar">
+          <button type="button" class="fc-btn fc-btn--sm" id="btn-lib-prev" disabled data-i18n="lib.prevPage">上一页</button>
+          <span id="lib-page-info" class="fc-chip fc-tabular">—</span>
+          <button type="button" class="fc-btn fc-btn--sm" id="btn-lib-next" disabled data-i18n="lib.nextPage">下一页</button>
+        </div>
+      </article>
+    </section>
+
+    <!-- VIEW 6: 歌词体检 -->
+    <section id="tab-lyrics" class="fc-view" data-view="lyrics" hidden>
+      <article class="fc-card">
+        <div class="fc-card-header">
+          <div class="fc-card-header__start">
+            <h2 class="fc-card-header__title" data-i18n="lyr.title">歌词体检</h2>
+            <span class="fc-card-header__sub" data-i18n="lyr.sub">八类歌词问题分组体检，可勾选清理</span>
+          </div>
+          <span id="lyr-summary" class="fc-chip fc-tabular" data-i18n="lyr.notLoaded">未体检</span>
+        </div>
+        <div class="fc-row" style="gap:8px;margin-bottom:10px;">
+          <button type="button" class="fc-btn fc-btn--sm fc-btn--primary" id="btn-lyr-reload" data-i18n="lyr.btnReload">重新体检</button>
+          <button type="button" class="fc-btn fc-btn--sm fc-btn--danger" id="btn-lyr-del"><span data-i18n="lyr.btnDelete">删除所选</span> (<span id="lyr-sel-count" class="fc-tabular">0</span>)</button>
+          <span class="fc-spacer"></span>
+          <span id="lyr-dir" class="fc-chip fc-mono" hidden></span>
+        </div>
+        <div class="fc-hint" style="margin-top:0;" data-i18n="lyr.hint">体检只读不改动任何文件；「删除所选」仅把歌词移入回收目录 staging/lrc_trash/&lt;时间戳&gt;/，随时可手动移回，绝不直接销毁。</div>
+        <div id="lyr-result" class="fc-block" style="margin-top:10px;" hidden></div>
+        <div id="lyr-groups" class="fc-dir-list" style="max-height:520px;margin-top:10px;">
+          <div class="fc-empty" data-i18n="lyr.empty">点击「重新体检」扫描曲库歌词问题</div>
+        </div>
+      </article>
+    </section>
+
+    <!-- VIEW 7: 改名工具 -->
+    <section id="tab-rename" class="fc-view" data-view="rename" hidden>
+      <article class="fc-card">
+        <div class="fc-card-header">
+          <div class="fc-card-header__start">
+            <h2 class="fc-card-header__title" data-i18n="ren.title">改名工具</h2>
+            <span class="fc-card-header__sub" data-i18n="ren.sub">按扫描建议批量规范曲库文件名</span>
+          </div>
+          <span id="ren-summary" class="fc-chip fc-tabular" data-i18n="ren.notScanned">未扫描</span>
+        </div>
+        <div class="fc-row" style="gap:8px;margin-bottom:10px;">
+          <button type="button" class="fc-btn fc-btn--sm fc-btn--primary" id="btn-ren-scan" data-i18n="ren.btnScan">扫描改名建议</button>
+          <button type="button" class="fc-btn fc-btn--sm" id="btn-ren-apply"><span data-i18n="ren.btnApply">应用所选</span> (<span id="ren-sel-count" class="fc-tabular">0</span>)</button>
+        </div>
+        <div class="fc-hint" style="margin-top:0;" data-i18n="ren.hint">应用时服务端会自动同步同名 .jpg / .lrc 侧车文件一起改名；目标已存在时跳过并报告，绝不覆盖。</div>
+        <div id="ren-result" class="fc-block" style="margin-top:10px;" hidden></div>
+        <div id="ren-list" class="fc-dir-list" style="max-height:520px;margin-top:10px;">
+          <div class="fc-empty" data-i18n="ren.empty">点击「扫描改名建议」检查曲库文件命名</div>
+        </div>
+      </article>
+    </section>
+
+    <!-- VIEW 8: 指纹对比 -->
+    <section id="tab-fingerprint" class="fc-view" data-view="fingerprint" hidden>
+      <article class="fc-card">
+        <div class="fc-card-header">
+          <div class="fc-card-header__start">
+            <h2 class="fc-card-header__title" data-i18n="fp.title">指纹对比</h2>
+            <span class="fc-card-header__sub" data-i18n="fp.sub">对比两个音频文件的 PCM 指纹（MD5）判断是否同一音源</span>
+          </div>
+        </div>
+        <div class="fc-block" style="margin-bottom:10px;">
+          <div class="fc-row" style="gap:8px;">
+            <label class="fc-switch-label" for="fp-a" style="font-weight:600;color:var(--fc-on-surface);" data-i18n="fp.labelA">文件 A</label>
+            <input type="text" id="fp-a" class="fc-input" placeholder="第一个音频文件的绝对路径…" data-i18n-ph="fp.pathPhA">
+          </div>
+          <div class="fc-row" style="gap:8px;margin-top:8px;">
+            <label class="fc-switch-label" for="fp-b" style="font-weight:600;color:var(--fc-on-surface);" data-i18n="fp.labelB">文件 B</label>
+            <input type="text" id="fp-b" class="fc-input" placeholder="第二个音频文件的绝对路径…" data-i18n-ph="fp.pathPhB">
+          </div>
+          <div class="fc-row" style="margin-top:12px;">
+            <button type="button" class="fc-btn fc-btn--primary" id="btn-fp" data-i18n="fp.btnCompare">对比</button>
+          </div>
+        </div>
+        <div id="fp-result" class="fc-block" hidden>
+          <div class="fc-row" style="justify-content:space-between;">
+            <span class="fc-chip" data-i18n="fp.resultA">A 指纹</span>
+            <span id="fp-a-md5" class="fc-fp-md5">—</span>
+          </div>
+          <div class="fc-row" style="justify-content:space-between;margin-top:8px;">
+            <span class="fc-chip" data-i18n="fp.resultB">B 指纹</span>
+            <span id="fp-b-md5" class="fc-fp-md5">—</span>
+          </div>
+          <div style="margin-top:10px;">
+            <span id="fp-match" class="fc-chip">—</span>
+          </div>
+        </div>
+      </article>
+    </section>
   </main>
 </div>
 
@@ -1861,6 +2119,22 @@ button, input, select, textarea {
   <button type="button" class="fc-dock__item" data-tab="dedupe">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="13" height="13" rx="2"/><path d="M8 20h10a2 2 0 0 0 2-2V8"/></svg>
     <span data-i18n="dock.dedupe">查重</span>
+  </button>
+  <button type="button" class="fc-dock__item" data-tab="library">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 4h3v16H4z"/><path d="M10.5 4h3v16h-3z"/><path d="M17.2 4.4l2.9.8-3.3 14.6-2.9-.8z"/></svg>
+    <span data-i18n="dock.library">曲库</span>
+  </button>
+  <button type="button" class="fc-dock__item" data-tab="lyrics">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="14 3 14 9 20 9"/><line x1="8" y1="14" x2="16" y2="14"/><line x1="8" y1="17.5" x2="12.5" y2="17.5"/></svg>
+    <span data-i18n="dock.lyrics">歌词</span>
+  </button>
+  <button type="button" class="fc-dock__item" data-tab="rename">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+    <span data-i18n="dock.rename">改名</span>
+  </button>
+  <button type="button" class="fc-dock__item" data-tab="fingerprint">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 12a6 6 0 0 1 12 0c0 3.5-.9 5-.9 8"/><path d="M9.5 13.5A2.5 2.5 0 0 1 12 11a2.5 2.5 0 0 1 2.5 2.5c0 2-.5 3-.5 5.5"/><path d="M12 15v4"/></svg>
+    <span data-i18n="dock.fingerprint">指纹</span>
   </button>
   <button type="button" class="fc-dock__item" data-tab="jobs">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
@@ -1925,11 +2199,19 @@ const I18N = {
     "nav.audit": "质量审计",
     "nav.dedupe": "曲库查重",
     "nav.jobs": "任务列表",
+    "nav.library": "曲库浏览",
+    "nav.lyrics": "歌词体检",
+    "nav.rename": "改名工具",
+    "nav.fingerprint": "指纹对比",
     "dock.import": "导入",
     "dock.upgrade": "升级",
     "dock.audit": "审计",
     "dock.dedupe": "查重",
     "dock.jobs": "任务",
+    "dock.library": "曲库",
+    "dock.lyrics": "歌词",
+    "dock.rename": "改名",
+    "dock.fingerprint": "指纹",
     "sb.collapse": "折叠侧边栏",
     "sb.switchLib": "切换曲库",
     "sb.appearance": "外观设置",
@@ -2034,6 +2316,11 @@ const I18N = {
     "jobs.copyOk": "日志已复制到剪贴板",
     "jobs.copyErr": "复制失败",
     "jobs.skipToast": "已请求跳过当前曲目",
+    "jobs.cancel": "⏹ 取消",
+    "jobs.cancelConfirm": "确认取消当前作业？将停止发送新任务并终止进行中的操作，剩余条目会补记为「已取消」。",
+    "jobs.cancelToast": "已请求取消作业",
+    "jobs.cancelledBadge": "已取消",
+    "jobs.cancelledRemaining": "剩余 {n}",
     "up.step1Title": "1 · 待升级清单",
     "up.queueCount": "{checked} / {total} 个文件",
     "up.clearList": "清空清单",
@@ -2107,6 +2394,82 @@ const I18N = {
     "ded.toastNeedSel": "请先勾选要清理的副本文件",
     "ded.confirmDel": "确认将选中的 {n} 个重复文件移入回收站（staging/dedupe_trash）？",
     "ded.toastMoved": "已移入回收站 {n} 个文件",
+    "lib.title": "曲库浏览",
+    "lib.sub": "按文件名与格式检索曲库音频文件",
+    "lib.notLoaded": "未载入",
+    "lib.summary": "共 {total} 个文件",
+    "lib.searchPh": "搜索文件名…",
+    "lib.extAll": "全部格式",
+    "lib.extAria": "按格式筛选",
+    "lib.pageSizeAria": "每页数量",
+    "lib.btnLoad": "载入曲库",
+    "lib.colName": "文件名",
+    "lib.colExt": "格式",
+    "lib.colSize": "大小 (MB)",
+    "lib.colMtime": "修改时间",
+    "lib.empty": "没有匹配的文件",
+    "lib.prevPage": "上一页",
+    "lib.nextPage": "下一页",
+    "lib.pageInfo": "第 {page} / {pages} 页",
+    "lib.tableCap": "曲库音频文件索引",
+    "lib.tableAria": "曲库文件列表",
+    "lyr.title": "歌词体检",
+    "lyr.sub": "八类歌词问题分组体检，可勾选清理",
+    "lyr.notLoaded": "未体检",
+    "lyr.scanning": "体检中…",
+    "lyr.summary": "共 {n} 个问题文件",
+    "lyr.btnReload": "重新体检",
+    "lyr.btnDelete": "删除所选",
+    "lyr.hint": "体检只读不改动任何文件；「删除所选」仅把歌词移入回收目录 staging/lrc_trash/<时间戳>/，随时可手动移回，绝不直接销毁。",
+    "lyr.empty": "点击「重新体检」扫描曲库歌词问题",
+    "lyr.noIssues": "未发现歌词问题，曲库很干净",
+    "lyr.noFiles": "该组当前没有文件",
+    "lyr.kind_orphan": "孤儿歌词（无对应音频）",
+    "lyr.kind_meta_title": "标题与元数据不符",
+    "lyr.kind_meta_artist": "艺人与元数据不符",
+    "lyr.kind_too_long": "歌词时长过长",
+    "lyr.kind_too_short": "歌词时长过短",
+    "lyr.kind_dup_content": "内容重复",
+    "lyr.kind_empty": "空歌词文件",
+    "lyr.kind_no_timestamps": "缺少时间戳",
+    "lyr.toastNeedSel": "请先勾选要删除的歌词文件",
+    "lyr.confirmDel": "确认删除所选的 {n} 个歌词文件？文件不会销毁，而是移入可恢复的回收目录 staging/lrc_trash/<时间戳>/，需要时可手动移回。",
+    "lyr.toastMoved": "已移入回收目录 {n} 个，失败 {f} 个",
+    "lyr.resultMoved": "已移入回收目录",
+    "lyr.resultFailed": "删除失败",
+    "ren.title": "改名工具",
+    "ren.sub": "按扫描建议批量规范曲库文件名",
+    "ren.notScanned": "未扫描",
+    "ren.scanning": "扫描中…",
+    "ren.summary": "{n} 个待改名建议",
+    "ren.btnScan": "扫描改名建议",
+    "ren.btnApply": "应用所选",
+    "ren.hint": "应用时服务端会自动同步同名 .jpg / .lrc 侧车文件一起改名；目标已存在时跳过并报告，绝不覆盖。",
+    "ren.empty": "点击「扫描改名建议」检查曲库文件命名",
+    "ren.nothingFound": "未发现可改名文件",
+    "ren.kind_junk": "垃圾标记",
+    "ren.kind_no_separator": "缺少分隔符",
+    "ren.kind_inverted": "顺序颠倒",
+    "ren.kind_artist_junk": "艺人垃圾标记",
+    "ren.toastNeedSel": "请先勾选要应用的改名项",
+    "ren.confirmApply": "确认对选中的 {n} 个文件执行改名？同名 .jpg / .lrc 侧车文件会一并同步改名。",
+    "ren.toastApplied": "改名完成：成功 {r} · 跳过 {s} · 失败 {f}",
+    "ren.resultTitle": "应用结果",
+    "ren.stRenamed": "已改名",
+    "ren.stSkip": "已跳过",
+    "ren.stFailed": "失败",
+    "fp.title": "指纹对比",
+    "fp.sub": "对比两个音频文件的 PCM 指纹（MD5）判断是否同一音源",
+    "fp.labelA": "文件 A",
+    "fp.labelB": "文件 B",
+    "fp.pathPhA": "第一个音频文件的绝对路径…",
+    "fp.pathPhB": "第二个音频文件的绝对路径…",
+    "fp.btnCompare": "对比",
+    "fp.toastNeedPaths": "请填写两个待对比文件的绝对路径",
+    "fp.resultA": "A 指纹",
+    "fp.resultB": "B 指纹",
+    "fp.matchYes": "指纹一致（同一音源）",
+    "fp.matchNo": "指纹不一致（不同音源）",
     "theme.title": "外观与主题引擎",
     "theme.lang": "界面语言",
     "theme.mode": "主题模式",
@@ -2147,11 +2510,19 @@ const I18N = {
     "nav.audit": "Quality Audit",
     "nav.dedupe": "Deduplicate",
     "nav.jobs": "Jobs",
+    "nav.library": "Library",
+    "nav.lyrics": "Lyrics Check",
+    "nav.rename": "Rename Tool",
+    "nav.fingerprint": "Fingerprint",
     "dock.import": "Import",
     "dock.upgrade": "Upgrade",
     "dock.audit": "Audit",
     "dock.dedupe": "Dedupe",
     "dock.jobs": "Jobs",
+    "dock.library": "Library",
+    "dock.lyrics": "Lyrics",
+    "dock.rename": "Rename",
+    "dock.fingerprint": "Print",
     "sb.collapse": "Collapse sidebar",
     "sb.switchLib": "Switch",
     "sb.appearance": "Appearance",
@@ -2256,6 +2627,11 @@ const I18N = {
     "jobs.copyOk": "Log copied to clipboard",
     "jobs.copyErr": "Copy failed",
     "jobs.skipToast": "Requested to skip current track",
+    "jobs.cancel": "⏹ Cancel",
+    "jobs.cancelConfirm": "Cancel this job? No new items will be started and the current one is terminated; remaining items are recorded as cancelled.",
+    "jobs.cancelToast": "Cancellation requested",
+    "jobs.cancelledBadge": "Cancelled",
+    "jobs.cancelledRemaining": "{n} left",
     "up.step1Title": "1 · Upgrade Queue",
     "up.queueCount": "{checked} / {total} files",
     "up.clearList": "Clear Queue",
@@ -2329,6 +2705,82 @@ const I18N = {
     "ded.toastNeedSel": "Select at least one duplicate file first",
     "ded.confirmDel": "Move {n} selected duplicate file(s) to trash (staging/dedupe_trash)?",
     "ded.toastMoved": "Moved {n} file(s) to trash",
+    "lib.title": "Library Browser",
+    "lib.sub": "Search library audio files by name and format",
+    "lib.notLoaded": "Not loaded",
+    "lib.summary": "{total} files",
+    "lib.searchPh": "Search filename…",
+    "lib.extAll": "All formats",
+    "lib.extAria": "Filter by format",
+    "lib.pageSizeAria": "Files per page",
+    "lib.btnLoad": "Load Library",
+    "lib.colName": "Filename",
+    "lib.colExt": "Format",
+    "lib.colSize": "Size (MB)",
+    "lib.colMtime": "Modified",
+    "lib.empty": "No matching files",
+    "lib.prevPage": "Prev",
+    "lib.nextPage": "Next",
+    "lib.pageInfo": "Page {page} / {pages}",
+    "lib.tableCap": "Library audio file index",
+    "lib.tableAria": "Library file list",
+    "lyr.title": "Lyrics Check",
+    "lyr.sub": "Eight groups of lyric issues, selectable for cleanup",
+    "lyr.notLoaded": "Not checked",
+    "lyr.scanning": "Checking…",
+    "lyr.summary": "{n} file(s) with issues",
+    "lyr.btnReload": "Re-check",
+    "lyr.btnDelete": "Delete Selected",
+    "lyr.hint": "The check is read-only; Delete Selected only moves lyrics to the recoverable trash staging/lrc_trash/<timestamp>/, restore manually anytime — never destroyed.",
+    "lyr.empty": "Click Re-check to scan lyric issues in the library",
+    "lyr.noIssues": "No lyric issues found — library is clean",
+    "lyr.noFiles": "No files in this group right now",
+    "lyr.kind_orphan": "Orphan lyrics (no audio)",
+    "lyr.kind_meta_title": "Title mismatch",
+    "lyr.kind_meta_artist": "Artist mismatch",
+    "lyr.kind_too_long": "Lyrics too long",
+    "lyr.kind_too_short": "Lyrics too short",
+    "lyr.kind_dup_content": "Duplicate content",
+    "lyr.kind_empty": "Empty lyric file",
+    "lyr.kind_no_timestamps": "Missing timestamps",
+    "lyr.toastNeedSel": "Select lyric files to delete first",
+    "lyr.confirmDel": "Delete {n} selected lyric file(s)? They are not destroyed — moved to the recoverable trash staging/lrc_trash/<timestamp>/ and can be restored manually.",
+    "lyr.toastMoved": "Moved {n} to trash, {f} failed",
+    "lyr.resultMoved": "Moved to trash",
+    "lyr.resultFailed": "Failed to delete",
+    "ren.title": "Rename Tool",
+    "ren.sub": "Batch-normalize library filenames by suggestion",
+    "ren.notScanned": "Not scanned",
+    "ren.scanning": "Scanning…",
+    "ren.summary": "{n} suggestion(s)",
+    "ren.btnScan": "Scan Suggestions",
+    "ren.btnApply": "Apply Selected",
+    "ren.hint": "On apply, the server renames matching .jpg / .lrc sidecar files together; targets that already exist are skipped and reported — never overwritten.",
+    "ren.empty": "Click Scan Suggestions to check library filenames",
+    "ren.nothingFound": "No files need renaming",
+    "ren.kind_junk": "Junk Tag",
+    "ren.kind_no_separator": "No Separator",
+    "ren.kind_inverted": "Inverted",
+    "ren.kind_artist_junk": "Artist Junk",
+    "ren.toastNeedSel": "Select items to apply first",
+    "ren.confirmApply": "Rename {n} selected file(s)? Matching .jpg / .lrc sidecar files will be renamed together.",
+    "ren.toastApplied": "Rename done: {r} renamed · {s} skipped · {f} failed",
+    "ren.resultTitle": "Apply Result",
+    "ren.stRenamed": "Renamed",
+    "ren.stSkip": "Skipped",
+    "ren.stFailed": "Failed",
+    "fp.title": "Fingerprint Compare",
+    "fp.sub": "Compare PCM fingerprints (MD5) of two audio files to tell if they share the same source",
+    "fp.labelA": "File A",
+    "fp.labelB": "File B",
+    "fp.pathPhA": "Absolute path of the first audio file…",
+    "fp.pathPhB": "Absolute path of the second audio file…",
+    "fp.btnCompare": "Compare",
+    "fp.toastNeedPaths": "Enter both absolute paths first",
+    "fp.resultA": "A MD5",
+    "fp.resultB": "B MD5",
+    "fp.matchYes": "Fingerprints match (same source)",
+    "fp.matchNo": "Fingerprints differ (different sources)",
     "theme.title": "Appearance & Theme",
     "theme.lang": "Language",
     "theme.mode": "Theme Mode",
@@ -3108,6 +3560,8 @@ function renderJobs(jobs) {
       `<div class="fc-jobcard__top">` +
       `<span class="fc-jobcard__name">${esc(trType(j.type))}</span>` +
       `<span class="fc-chip ${chipCls}">${esc(st)}</span>` +
+      // snapshot.cancelled 防御式徽标：字段缺失时一律不显示（冻结契约 1）
+      (j.cancelled ? `<span class="fc-chip fc-chip--warn">${esc(t("jobs.cancelledBadge"))}${Number(j.cancelled_remaining) > 0 ? ` · ${esc(t("jobs.cancelledRemaining", { n: j.cancelled_remaining }))}` : ""}</span>` : "") +
       `<span class="fc-jobcard__time fc-tabular">${esc(j.started_h)}</span>` +
       `<span class="fc-jobcard__sum">${esc(j.summary || "")}</span>` +
       `</div>` +
@@ -3182,6 +3636,18 @@ async function pollJob() {
     const showCtl = j.type === "download" && j.status === "running" && j.current !== undefined;
     $("#btn-pause").hidden = !showCtl;
     $("#btn-skip").hidden = !showCtl;
+    // 取消按钮：作业 queued/running 时可用（冻结契约 1）
+    $("#btn-cancel").hidden = !(j.status === "running" || j.status === "queued");
+    const ccChip = $("#job-cancelled-chip");
+    if (j.cancelled) {
+      ccChip.textContent = Number(j.cancelled_remaining) > 0
+        ? `${t("jobs.cancelledBadge")} · ${t("jobs.cancelledRemaining", { n: j.cancelled_remaining })}`
+        : t("jobs.cancelledBadge");
+      ccChip.hidden = false;
+    } else {
+      ccChip.hidden = true;
+      ccChip.textContent = "";
+    }
     if (showCtl) {
       $("#btn-pause").textContent = j.paused ? t("jobs.resume") : t("jobs.pause");
       $("#btn-pause").dataset.paused = j.paused ? "1" : "";
@@ -3242,6 +3708,20 @@ $("#btn-skip").onclick = async () => {
       body: "{}",
     });
     showToast(t("jobs.skipToast"));
+  } catch (e) { showToast(e.message, "err"); }
+};
+
+$("#btn-cancel").onclick = async () => {
+  if (!activeJobId) return;
+  if (!confirm(t("jobs.cancelConfirm"))) return;
+  try {
+    await api(`/api/job/${activeJobId}/cancel`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    showToast(t("jobs.cancelToast"));
+    pollJob();
+    refreshState();
   } catch (e) { showToast(e.message, "err"); }
 };
 
@@ -3577,6 +4057,313 @@ $("#btn-ded-del").onclick = async () => {
     await scanDedupe();
     refreshState();
   } catch (e) { showToast(e.message, "err"); }
+};
+
+/* ---------- Library Browser（冻结契约 2：/api/library/files） ---------- */
+let libPage = 1;
+let libTotal = 0;
+let libLoading = false;
+let libSearchTimer = null;
+
+async function loadLibraryFiles(resetPage = false) {
+  if (libLoading) return;
+  if (resetPage) libPage = 1;
+  libLoading = true;
+  $("#btn-lib-load").disabled = true;
+  try {
+    const pageSize = Number($("#lib-page-size").value) || 50;
+    const params = new URLSearchParams({ page: String(libPage), page_size: String(pageSize) });
+    const q = ($("#lib-q").value || "").trim();
+    const ext = $("#lib-ext").value || "";
+    if (q) params.set("q", q);
+    if (ext) params.set("ext", ext);
+    const res = await api("/api/library/files?" + params.toString());
+    libTotal = Number(res.total) || 0;
+    libPage = Number(res.page) || libPage;
+    const pages = Math.max(1, Math.ceil(libTotal / pageSize));
+    if (libPage > pages) { libPage = pages; libLoading = false; return loadLibraryFiles(); }
+    $("#lib-summary").textContent = t("lib.summary", { total: libTotal });
+    $("#lib-page-info").textContent = t("lib.pageInfo", { page: libPage, pages });
+    $("#btn-lib-prev").disabled = libPage <= 1;
+    $("#btn-lib-next").disabled = libPage >= pages;
+    $("#lib-files tbody").innerHTML = (res.files || []).map((f) =>
+      `<tr>` +
+      `<td data-label="${esc(t("lib.colName"))}" title="${esc(f.name)}">${esc(f.name)}</td>` +
+      `<td data-label="${esc(t("lib.colExt"))}"><span class="fc-chip">${esc((f.ext || "").toUpperCase())}</span></td>` +
+      `<td data-label="${esc(t("lib.colSize"))}" class="is-num">${esc(f.size_mb)}</td>` +
+      `<td data-label="${esc(t("lib.colMtime"))}" class="fc-tabular">${esc(f.mtime_h)}</td>` +
+      `</tr>`
+    ).join("") || `<tr><td colspan="4" class="fc-empty">${esc(t("lib.empty"))}</td></tr>`;
+  } catch (e) {
+    $("#lib-summary").textContent = t("lib.notLoaded");
+    showToast(e.message, "err");
+  } finally {
+    libLoading = false;
+    $("#btn-lib-load").disabled = false;
+  }
+}
+
+$("#btn-lib-load").onclick = () => loadLibraryFiles(true);
+$("#btn-lib-prev").onclick = () => { if (libPage > 1) { libPage -= 1; loadLibraryFiles(); } };
+$("#btn-lib-next").onclick = () => { libPage += 1; loadLibraryFiles(); };
+$("#lib-ext").onchange = () => loadLibraryFiles(true);
+$("#lib-page-size").onchange = () => loadLibraryFiles(true);
+$("#lib-q").oninput = () => {
+  if (libSearchTimer) clearTimeout(libSearchTimer);
+  libSearchTimer = setTimeout(() => loadLibraryFiles(true), 320);
+};
+$("#lib-q").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); loadLibraryFiles(true); }
+});
+
+/* ---------- Lyrics Check（冻结契约 3：/api/lyrics/report + /api/lyrics/delete） ---------- */
+const LYR_KINDS = ["orphan", "meta_title", "meta_artist", "too_long", "too_short", "dup_content", "empty", "no_timestamps"];
+let lyrReport = null;
+const lyrSelected = new Set();
+
+function lyrKindLabel(kind) {
+  return t(`lyr.kind_${kind}`) !== `lyr.kind_${kind}` ? t(`lyr.kind_${kind}`) : kind;
+}
+
+// 绝对路径 = music_dir + name（按 music_dir 的分隔符拼接，契约 3 约定）
+function lyrAbsPath(name) {
+  const dir = (lyrReport && lyrReport.music_dir) || "";
+  if (!dir) return name;
+  const sep = dir.includes("\\") && !dir.includes("/") ? "\\" : "/";
+  const withSep = dir.endsWith("/") || dir.endsWith("\\") ? dir : dir + sep;
+  return withSep + name;
+}
+
+async function loadLyricsReport() {
+  const btn = $("#btn-lyr-reload");
+  btn.disabled = true;
+  $("#lyr-summary").textContent = t("lyr.scanning");
+  try {
+    const res = await api("/api/lyrics/report");
+    lyrReport = res;
+    lyrSelected.clear();
+    renderLyricsReport();
+    renderLyricsResult(null, null);
+    $("#lyr-summary").textContent = t("lyr.summary", { n: Number(res.total) || 0 });
+    if (res.music_dir) {
+      $("#lyr-dir").textContent = res.music_dir;
+      $("#lyr-dir").hidden = false;
+    }
+  } catch (e) {
+    $("#lyr-summary").textContent = t("lyr.notLoaded");
+    showToast(e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderLyricsReport() {
+  $("#lyr-sel-count").textContent = String(lyrSelected.size);
+  const groups = (lyrReport && lyrReport.groups) || [];
+  if (!groups.length) {
+    $("#lyr-groups").innerHTML = `<div class="fc-empty">${esc(t("lyr.noIssues"))}</div>`;
+    return;
+  }
+  // 固定八类顺序渲染，报告里缺失的 kind 补空组置灰（契约 3）
+  const byKind = new Map(groups.map((g) => [g.kind || "", g]));
+  const ordered = LYR_KINDS.map((k) => byKind.get(k) || { kind: k, count: 0, files: [] });
+  $("#lyr-groups").innerHTML = ordered.map((g) => {
+    const files = g.files || [];
+    const count = Number(g.count ?? files.length) || 0;
+    const isZero = count === 0;
+    const rows = files.map((f) => {
+      const nm = f.name || "";
+      const checked = lyrSelected.has(nm) ? "checked" : "";
+      return `<label class="fc-lyr-file">` +
+        `<input type="checkbox" class="lyr-cb" data-name="${esc(nm)}" ${checked}>` +
+        `<span class="fc-lyr-file__name" title="${esc(nm)}">${esc(nm)}</span>` +
+        `<span class="fc-chip">${esc(f.issue || "")}</span>` +
+      `</label>`;
+    }).join("") || `<div class="fc-hint" style="margin-top:6px;">${esc(t("lyr.noFiles"))}</div>`;
+    return `<details class="fc-block fc-lyr-group${isZero ? " is-zero" : ""}">` +
+      `<summary>` +
+        `<span class="fc-chip">${esc(lyrKindLabel(g.kind || ""))}</span>` +
+        `<span class="fc-chip fc-tabular">${count}</span>` +
+      `</summary>` +
+      `<div class="fc-lyr-files">${rows}</div>` +
+    `</details>`;
+  }).join("");
+}
+
+function renderLyricsResult(moved, failed) {
+  const box = $("#lyr-result");
+  const mv = moved || [];
+  const fl = failed || [];
+  if (!mv.length && !fl.length) { box.hidden = true; box.innerHTML = ""; return; }
+  const fmtFail = (x) => (typeof x === "string" ? x : JSON.stringify(x));
+  box.innerHTML =
+    `<div class="fc-row" style="gap:6px;flex-wrap:wrap;">` +
+      (mv.length ? `<span class="fc-chip fc-chip--ok fc-tabular">${esc(t("lyr.resultMoved"))} ${mv.length}</span>` : "") +
+      (fl.length ? `<span class="fc-chip fc-chip--error fc-tabular">${esc(t("lyr.resultFailed"))} ${fl.length}</span>` : "") +
+    `</div>` +
+    (mv.length ? `<div class="fc-hint fc-mono" style="word-break:break-all;margin-top:6px;">${esc(mv.map(String).join(" ; "))}</div>` : "") +
+    (fl.length ? `<div class="fc-hint fc-mono" style="word-break:break-all;margin-top:6px;">${esc(fl.map(fmtFail).join(" ; "))}</div>` : "");
+  box.hidden = false;
+}
+
+$("#btn-lyr-reload").onclick = () => loadLyricsReport();
+$("#lyr-groups").addEventListener("change", (e) => {
+  if (!e.target.classList.contains("lyr-cb")) return;
+  const nm = e.target.dataset.name;
+  if (!nm) return;
+  if (e.target.checked) lyrSelected.add(nm);
+  else lyrSelected.delete(nm);
+  $("#lyr-sel-count").textContent = String(lyrSelected.size);
+});
+$("#btn-lyr-del").onclick = async () => {
+  const files = [...lyrSelected].map(lyrAbsPath);
+  if (!files.length) return showToast(t("lyr.toastNeedSel"), "err");
+  if (!confirm(t("lyr.confirmDel", { n: files.length }))) return;
+  try {
+    const res = await api("/api/lyrics/delete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files }),
+    });
+    const moved = res.moved || [];
+    const failed = res.failed || [];
+    renderLyricsResult(moved, failed);
+    showToast(t("lyr.toastMoved", { n: moved.length, f: failed.length }), failed.length ? "err" : "ok");
+    await loadLyricsReport();
+  } catch (e) { showToast(e.message, "err"); }
+};
+
+/* ---------- Rename Tool（冻结契约 4/5：/api/rename/scan + /api/rename/apply） ---------- */
+let renameItems = [];
+const renSelected = new Set();
+
+function renKey(it) { return `${it.old}\n=>\n${it.new}`; }
+
+function renKindLabel(kind) {
+  return t(`ren.kind_${kind}`) !== `ren.kind_${kind}` ? t(`ren.kind_${kind}`) : kind;
+}
+
+async function scanRename() {
+  const btn = $("#btn-ren-scan");
+  btn.disabled = true;
+  $("#ren-summary").textContent = t("ren.scanning");
+  try {
+    const res = await api("/api/rename/scan");
+    renameItems = Array.isArray(res) ? res : [];
+    renSelected.clear();
+    renderRenameList();
+    $("#ren-summary").textContent = t("ren.summary", { n: renameItems.length });
+  } catch (e) {
+    $("#ren-summary").textContent = t("ren.notScanned");
+    showToast(e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderRenameList() {
+  $("#ren-sel-count").textContent = String(renSelected.size);
+  if (!renameItems.length) {
+    $("#ren-list").innerHTML = `<div class="fc-empty">${esc(t("ren.nothingFound"))}</div>`;
+    return;
+  }
+  $("#ren-list").innerHTML = renameItems.map((it) => {
+    const badges = (it.kinds || []).map((k) =>
+      `<span class="fc-chip fc-chip--warn">${esc(renKindLabel(k))}</span>`).join("");
+    const checked = renSelected.has(renKey(it)) ? "checked" : "";
+    return `<label class="fc-dir-item fc-ren-item">` +
+      `<span class="fc-row" style="gap:8px;flex:1;min-width:0;">` +
+        `<input type="checkbox" class="ren-cb" data-key="${esc(renKey(it))}" ${checked}>` +
+        `<span class="fc-ren-path" title="${esc(it.old)}">${esc(it.old)}</span>` +
+        `<span class="fc-ren-arrow" aria-hidden="true">→</span>` +
+        `<span class="fc-ren-path" title="${esc(it.new)}">${esc(it.new)}</span>` +
+      `</span>` +
+      `<span class="fc-row" style="gap:4px;flex:none;">${badges}</span>` +
+    `</label>`;
+  }).join("");
+}
+
+function renderRenameResult(records) {
+  const box = $("#ren-result");
+  const recs = records || [];
+  if (!recs.length) { box.hidden = true; box.innerHTML = ""; return; }
+  const nR = recs.filter((r) => r.status === "renamed").length;
+  const nS = recs.filter((r) => r.status === "skip").length;
+  const nF = recs.filter((r) => r.status === "failed").length;
+  const cls = { renamed: "fc-chip--ok", skip: "fc-chip--warn", failed: "fc-chip--error" };
+  const lbl = { renamed: t("ren.stRenamed"), skip: t("ren.stSkip"), failed: t("ren.stFailed") };
+  box.innerHTML =
+    `<div class="fc-row" style="gap:6px;margin-bottom:6px;flex-wrap:wrap;">` +
+      `<strong style="font-size:13px;">${esc(t("ren.resultTitle"))}</strong>` +
+      `<span class="fc-chip fc-chip--ok fc-tabular">${esc(lbl.renamed)} ${nR}</span>` +
+      `<span class="fc-chip fc-chip--warn fc-tabular">${esc(lbl.skip)} ${nS}</span>` +
+      `<span class="fc-chip fc-chip--error fc-tabular">${esc(lbl.failed)} ${nF}</span>` +
+    `</div>` +
+    recs.map((r) => {
+      const c = cls[r.status] || "";
+      const l = lbl[r.status] || r.status || "";
+      return `<div class="fc-ren-result-line">` +
+        `<span class="fc-chip ${c}">${esc(l)}</span>` +
+        `<span class="fc-ren-path" title="${esc(r.old || "")}">${esc(r.old || "")} → ${esc(r.new || "")}</span>` +
+        (r.detail ? `<span class="fc-hint" style="margin:0;">${esc(r.detail)}</span>` : "") +
+      `</div>`;
+    }).join("");
+  box.hidden = false;
+}
+
+$("#btn-ren-scan").onclick = () => scanRename();
+$("#ren-list").addEventListener("change", (e) => {
+  if (!e.target.classList.contains("ren-cb")) return;
+  const key = e.target.dataset.key;
+  if (!key) return;
+  if (e.target.checked) renSelected.add(key);
+  else renSelected.delete(key);
+  $("#ren-sel-count").textContent = String(renSelected.size);
+});
+$("#btn-ren-apply").onclick = async () => {
+  const items = renameItems
+    .filter((it) => renSelected.has(renKey(it)))
+    .map((it) => ({ old: it.old, new: it.new }));
+  if (!items.length) return showToast(t("ren.toastNeedSel"), "err");
+  if (!confirm(t("ren.confirmApply", { n: items.length }))) return;
+  try {
+    const res = await api("/api/rename/apply", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    });
+    const records = res.records || [];
+    renderRenameResult(records);
+    showToast(t("ren.toastApplied", {
+      r: records.filter((x) => x.status === "renamed").length,
+      s: records.filter((x) => x.status === "skip").length,
+      f: records.filter((x) => x.status === "failed").length,
+    }), "ok");
+    await scanRename();
+  } catch (e) { showToast(e.message, "err"); }
+};
+
+/* ---------- Fingerprint Compare（冻结契约 5：/api/fingerprint?a=&b=） ---------- */
+$("#btn-fp").onclick = async () => {
+  const a = ($("#fp-a").value || "").trim();
+  const b = ($("#fp-b").value || "").trim();
+  if (!a || !b) return showToast(t("fp.toastNeedPaths"), "err");
+  const btn = $("#btn-fp");
+  btn.disabled = true;
+  try {
+    const q = `?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`;
+    const res = await api("/api/fingerprint" + q);
+    $("#fp-result").hidden = false;
+    $("#fp-a-md5").textContent = res.a_md5 || "—";
+    $("#fp-b-md5").textContent = res.b_md5 || "—";
+    const m = $("#fp-match");
+    if (res.match === true) {
+      m.className = "fc-chip fc-chip--ok";
+      m.textContent = t("fp.matchYes");
+    } else {
+      m.className = "fc-chip fc-chip--error";
+      m.textContent = t("fp.matchNo");
+    }
+  } catch (e) { showToast(e.message, "err"); }
+  finally { btn.disabled = false; }
 };
 
 applyTheme();

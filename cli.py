@@ -181,21 +181,26 @@ def _resolve_short_url(uri: str) -> str:
     return uri
 
 
-def _http_playlist_route(uri: str):
-    """平台歌单 URL -> (kind, tracks)：已知平台走直连快路，其余交给 musicdl 兜底。"""
+def _http_playlist_route(uri: str, netease_cookie: str | None = None,
+                         qq_cookie: str | None = None):
+    """平台歌单 URL -> (kind, tracks)：已知平台走直连快路，其余交给 musicdl 兜底。
+
+    netease_cookie/qq_cookie 为 [cookies] 登录态（默认 None 保持匿名，签名兼容旧调用）。
+    """
     uri = _resolve_short_url(uri)
     m = re.search(r"music\.163\.com.*?id=(\d+)", uri)
     if m:
         from flac_hunter.sources.netease import fetch_playlist
 
-        tracks = [dict(t, position=i) for i, t in enumerate(fetch_playlist(m.group(1)), 1)]
+        tracks = [dict(t, position=i)
+                  for i, t in enumerate(fetch_playlist(m.group(1), cookie=netease_cookie), 1)]
         _log(f"netease playlist (URL 自动路由): fetched={len(tracks)}")
         return "netease", tracks
     m = re.search(r"y\.qq\.com/.*?playlist/(\d+)", uri) or re.search(r"y\.qq\.com/.*?[?&]id=(\d+)", uri)
     if m:
         from flac_hunter.spotify_cli import fetch_qq_playlist
 
-        songlist = _tracks_from(fetch_qq_playlist(m.group(1)))
+        songlist = _tracks_from(fetch_qq_playlist(m.group(1), cookie=qq_cookie))
         tracks = [_qq_track_map(s, pos) for pos, s in enumerate(songlist, 1)]
         _log(f"qq playlist (URL 自动路由): fetched={len(tracks)}")
         return "qq", tracks
@@ -229,6 +234,11 @@ def cmd_prepare(args):
     cfg = load_config()
     if getattr(args, "music_dir", None):
         cfg.paths.music = str(Path(args.music_dir).expanduser())
+    # [cookies] 登录态透传（T2 私密歌单支持）：空串归一为 None，fetch 层/头层不再区分；
+    # 防御式 getattr——cfg 缺 cookies 属性（旧形态/桩）时回退空 = 匿名行为与现状一致
+    _cookies = getattr(cfg, "cookies", None)
+    netease_cookie = str(getattr(_cookies, "netease", "") or "") or None
+    qq_cookie = str(getattr(_cookies, "qq", "") or "") or None
     uri = args.uri
     tracks = []
     kind = None
@@ -280,14 +290,14 @@ def cmd_prepare(args):
 
         kind = "qq"
         disstid = uri.split(":", 1)[1]
-        songlist = _tracks_from(fetch_qq_playlist(disstid))
+        songlist = _tracks_from(fetch_qq_playlist(disstid, cookie=qq_cookie))
         tracks = [_qq_track_map(s, pos) for pos, s in enumerate(songlist, 1)]
     elif uri.startswith("netease:"):
         from flac_hunter.sources.netease import fetch_playlist
 
         kind = "netease"
         tracks = []
-        for pos, t in enumerate(fetch_playlist(uri.split(":", 1)[1]), 1):
+        for pos, t in enumerate(fetch_playlist(uri.split(":", 1)[1], cookie=netease_cookie), 1):
             t["position"] = pos
             tracks.append(t)
         _log(f"netease playlist: fetched={len(tracks)}")
@@ -306,7 +316,7 @@ def cmd_prepare(args):
         if not tracks:
             _log("（匿名只能读公开收藏夹；空结果可能是收藏夹私密/不存在/风控）")
     elif uri.startswith(("http://", "https://")):
-        kind, tracks = _http_playlist_route(uri)
+        kind, tracks = _http_playlist_route(uri, netease_cookie=netease_cookie, qq_cookie=qq_cookie)
     else:
         raise SystemExit(
             "--uri 支持 spotify:... | qq:<disstid> | netease:<歌单id> | "

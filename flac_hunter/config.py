@@ -52,6 +52,18 @@ class Aliases:
 
 
 @dataclass
+class Cookies:
+    """登录态配置：netease/qq 填 Cookie 串（网易云支持完整串或 MUSIC_U=…），空=匿名。
+
+    消费链路见 cli.cmd_prepare（qq:/netease: 分支与 URL 自动路由）->
+    spotify_cli.fetch_qq_playlist / sources.netease.fetch_playlist -> util.http_get Cookie 头。
+    """
+
+    netease: str = ""
+    qq: str = ""
+
+
+@dataclass
 class Config:
     """配置聚合对象，属性与 config.toml 顶层表一一对应。"""
 
@@ -59,6 +71,7 @@ class Config:
     rate: Rate = field(default_factory=Rate)
     match: MatchCfg = field(default_factory=MatchCfg)
     aliases: Aliases = field(default_factory=Aliases)
+    cookies: Cookies = field(default_factory=Cookies)
 
 
 def _str_map(section: dict, keys: tuple[str, ...], obj: object) -> None:
@@ -131,5 +144,10 @@ def load_config(path: str | Path | None = None) -> Config:
             v = aliases.get(k)
             if isinstance(v, list):
                 setattr(cfg.aliases, k, [x for x in v if isinstance(x, str)])
+
+    # [cookies] 登录态（T2 私密歌单支持）：仅接受 str，缺失/非 str 保持 ""（匿名，蓝本 _str_map config.py:64-69）
+    cookies = data.get("cookies")
+    if isinstance(cookies, dict):
+        _str_map(cookies, ("netease", "qq"), cfg.cookies)
 
     return cfg

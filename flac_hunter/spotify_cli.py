@@ -165,8 +165,12 @@ def _parse_qq_response(raw: bytes):
     return []
 
 
-def fetch_qq_playlist(disstid):
-    """匿名拉取 QQ 歌单，返回 cdlist[0].songlist 列表（唯一发起网络请求的函数，离线时绝不调用）。"""
+def fetch_qq_playlist(disstid, cookie: str | None = None):
+    """拉取 QQ 歌单，返回 cdlist[0].songlist 列表（唯一发起网络请求的函数，离线时绝不调用）。
+
+    cookie 非空时附带 Cookie 头（[cookies].qq 登录态，可读私密歌单）；
+    空则匿名——util._headers（util.py:24-31）对空 cookie 天然不加 Cookie 键。
+    """
     url = f"{QQ_FCG_URL}?type=1&disstid={disstid}&format=json"
-    raw = http_get(url, ua=QQ_UA, referer="https://y.qq.com/")  # util.http_get 返回 bytes
+    raw = http_get(url, ua=QQ_UA, referer="https://y.qq.com/", cookie=cookie or None)  # 返回 bytes
     return _parse_qq_response(raw)

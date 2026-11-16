@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -1707,6 +1708,582 @@ def check_z13_cover_lyrics_and_upgrade_repair():
         shutil.rmtree(td, ignore_errors=True)
 
 
+# ---------- z14-z20. GUI 新端点离线测试（公共 HTTP fixture，z12 范式：临时 REPO + 随机端口） ----------
+
+
+def _gui_http(tmp: Path):
+    """z14–z20 公共 fixture：临时曲库/staging + 本地 127.0.0.1 随机端口 HTTP 服务。
+
+    调用方须先替换 _gui.REPO = tmp（由各测试的 finally 还原），并在 finally 里
+    srv.shutdown() + srv.server_close()。返回 (runner, base, srv)。
+    """
+    import threading
+
+    import gui as _gui
+    from flac_hunter.config import load_config
+
+    (tmp / "tasks").mkdir(parents=True, exist_ok=True)
+    (tmp / "music").mkdir(parents=True, exist_ok=True)
+    cfg = load_config()
+    cfg.paths.music = tmp / "music"
+    cfg.paths.staging = tmp / "staging"
+    runner = _gui.Runner(cfg)
+
+    class TestHandler(_gui.Handler):
+        pass
+    TestHandler.runner = runner
+    srv = _gui._LocalServer(("127.0.0.1", 0), TestHandler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return runner, f"http://127.0.0.1:{srv.server_address[1]}", srv
+
+
+def _gui_get(base: str, path: str):
+    """GET 并返回 (status, json)；非 2xx 时读 error body（不抛 HTTPError）。"""
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(base + path, headers={"Origin": base})
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode("utf-8"))
+
+
+def _gui_post(base: str, path: str, payload=None):
+    """同源 POST（z12 范式：Origin+Sec-Fetch-Site same-origin），返回 (status, json)。"""
+    import urllib.error
+    import urllib.request
+
+    data = json.dumps(payload if payload is not None else {}).encode("utf-8")
+    req = urllib.request.Request(
+        base + path, data=data,
+        headers={"Origin": base, "Sec-Fetch-Site": "same-origin",
+                 "Content-Type": "application/json"},
+        method="POST")
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode("utf-8"))
+
+
+def _wait_job(job, deadline_s: float = 25.0) -> str:
+    """轮询等待作业离开 queued/running，返回终态 status。"""
+    dl = time.time() + deadline_s
+    while time.time() < dl and job.status in ("queued", "running"):
+        time.sleep(0.05)
+    return job.status
+
+
+# ---------- z14. GUI 作业取消（逐曲/子进程/审计三类 + snapshot.cancelled 契约字段） ----------
+
+
+@check("z14. gui 作业取消：逐曲下载补 cancelled 台账、子进程秒级终止、audit 保留已完成")
+def check_z14_gui_cancel():
+    import flac_hunter.audit as _aud
+    import gui as _gui
+
+    tmp = Path(tempfile.mkdtemp(prefix="fh_z14_"))
+    orig_repo = _gui.REPO
+    orig_audit_one = _aud.audit_one
+    srv = None
+    try:
+        _gui.REPO = tmp
+        runner, base, srv = _gui_http(tmp)
+
+        # ===== a) 逐曲下载取消：3 首、桩命令输出后静默 30s =====
+        job = _gui.Job("z14per", "download", None, tmp, total=3, tracks_path="t.json",
+                       tracks_list=[{"uri": "bili:video:A", "name": "T1"},
+                                    {"uri": "bili:video:B", "name": "T2"},
+                                    {"uri": "bili:video:C", "name": "T3"}])
+        runner.jobs[job.id] = job
+        runner.order.append(job.id)
+        runner.queue.append(job.id)
+        orig_cmd = runner._download_cmd
+        runner._download_cmd = lambda j, k: [
+            sys.executable, "-c",
+            "import sys, time; print('z14-dl:' + sys.argv[1], flush=True); time.sleep(30)",
+            k]
+        try:
+            dl0 = time.time() + 15
+            while time.time() < dl0 and not any("z14-dl:A" in l for l in list(job.log)):
+                time.sleep(0.05)
+            assert any("z14-dl:A" in l for l in list(job.log)), \
+                f"首曲桩命令未执行: {list(job.log)}"
+            code, snap = _gui_post(base, f"/api/job/{job.id}/cancel")
+            assert code == 200, (code, snap)
+            assert snap["cancelled"] is True, snap
+            assert snap["cancelled_remaining"] == 3, \
+                f"取消口径 = 被终止的当前曲(T1) + 未开工(T2/T3) = 3: {snap}"
+            st = _wait_job(job)
+        finally:
+            runner._download_cmd = orig_cmd
+        assert st == "cancelled", f"取消后状态应为 cancelled: {st} log={list(job.log)}"
+        # 临时 cwd 台账：3 首各有一条 status=="cancelled"（当前曲被终止 + 剩余逐条补写）
+        ledger = tmp / "tasks" / "results.jsonl"
+        assert ledger.exists(), "取消台账未写入"
+        recs = [json.loads(l) for l in ledger.read_text(encoding="utf-8").splitlines() if l.strip()]
+        cn = [r for r in recs if r.get("status") == "cancelled"]
+        assert len(cn) == 3, f"3 首都应补 cancelled 台账: {recs}"
+        assert {r.get("track", {}).get("name") for r in cn} == {"T1", "T2", "T3"}, recs
+        assert not any("z14-dl:B" in l for l in job.log), "未开工曲 T2 的桩命令不应执行"
+        assert not any("z14-dl:C" in l for l in job.log), "未开工曲 T3 的桩命令不应执行"
+        snap2 = job.snapshot()
+        assert snap2["cancelled"] is True and snap2["cancelled_remaining"] == 3, snap2
+        assert snap2["status"] == "cancelled", snap2
+
+        # ===== b) 子进程作业取消：sleep 60s 桩，取消后秒级结束、exit_code 非 0 =====
+        job_sub = _gui.Job("z14sub", "prepare",
+                           [sys.executable, "-c", "import time; time.sleep(60)"], tmp)
+        runner.jobs[job_sub.id] = job_sub
+        runner.order.append(job_sub.id)
+        runner.queue.append(job_sub.id)
+        dl0 = time.time() + 10
+        while time.time() < dl0 and job_sub.current_proc is None:
+            time.sleep(0.05)
+        assert job_sub.current_proc is not None, "子进程未启动"
+        t0 = time.time()
+        code, snap = _gui_post(base, f"/api/job/{job_sub.id}/cancel")
+        assert code == 200 and snap["cancelled"] is True, (code, snap)
+        st = _wait_job(job_sub, deadline_s=20.0)
+        dt = time.time() - t0
+        assert st == "cancelled", \
+            f"子进程作业取消状态异常: {st} log={list(job_sub.log)}"
+        assert job_sub.exit_code not in (0, None), \
+            f"被终止子进程退出码应非 0: {job_sub.exit_code}"
+        assert dt < 20, f"取消后 {dt:.1f}s 才结束（60s sleep 未被终止）"
+        assert job_sub.snapshot()["cancelled"] is True
+
+        # ===== c) audit 取消：假 audit_one（与 audit.py:280-288 同形态 dict）+ 3 个 0 字节 flac =====
+        mdir_c = tmp / "music_c"
+        mdir_c.mkdir()
+        for nm in ("A1 - S.flac", "A2 - S.flac", "A3 - S.flac"):
+            (mdir_c / nm).write_bytes(b"")
+
+        def fake_audit_one(path, *a, **k):
+            time.sleep(0.5)
+            # 形态纪律：_run_audit 对返回值做 r.get("issues")/r.get(gate) 操作，
+            # 返回 None/异形 dict 会 AttributeError——桩必须与真实 audit_one 同键
+            return {"path": str(path), "dur_ok": True, "tags_ok": True,
+                    "jpg_ok": True, "flac_ok": True, "issues": []}
+
+        _aud.audit_one = fake_audit_one
+        try:
+            snap_a = runner.submit("audit", None, music_dir=str(mdir_c))
+            job_a = runner.jobs[snap_a["id"]]
+            dl0 = time.time() + 10
+            while time.time() < dl0 and job_a.done < 1:
+                time.sleep(0.03)
+            assert job_a.done >= 1, f"审计未推进: done={job_a.done} log={list(job_a.log)}"
+            code, snap = _gui_post(base, f"/api/job/{job_a.id}/cancel")
+            assert code == 200 and snap["cancelled"] is True, (code, snap)
+            st = _wait_job(job_a, deadline_s=15.0)
+        finally:
+            _aud.audit_one = orig_audit_one
+        assert st == "cancelled", f"audit 取消状态异常: {st}"
+        assert job_a.done < 3, f"取消后不应跑完全部: done={job_a.done}"
+        assert job_a.audit is not None and job_a.audit.get("total") == 3, job_a.audit
+        assert (job_a.audit.get("pass") or 0) >= 1, "已完成部分应保留在 job.audit"
+
+        # ===== queued 作业取消：worker 被占位作业占住时取消 → 取出即跳过执行（契约①） =====
+        job_hold = _gui.Job("z14hold", "prepare",
+                            [sys.executable, "-c", "import time; time.sleep(3)"], tmp)
+        runner.jobs[job_hold.id] = job_hold
+        runner.order.append(job_hold.id)
+        runner.queue.append(job_hold.id)
+        job_q = _gui.Job("z14q", "prepare",
+                         [sys.executable, "-c", "print('z14-queued-ran', flush=True)"], tmp)
+        runner.jobs[job_q.id] = job_q
+        runner.order.append(job_q.id)
+        runner.queue.append(job_q.id)
+        dl0 = time.time() + 10
+        while time.time() < dl0 and job_hold.status != "running":
+            time.sleep(0.05)
+        assert job_hold.status == "running", "占位作业未启动"
+        code, snap = _gui_post(base, f"/api/job/{job_q.id}/cancel")
+        assert code == 200 and snap["cancelled"] is True, (code, snap)
+        assert snap["cancelled_remaining"] == 0, f"无 tracks_list 作业剩余应为 0: {snap}"
+        assert _wait_job(job_hold) == "done", "占位作业不应受影响"
+        st = _wait_job(job_q)
+        assert st == "cancelled", f"queued 取消应取出即跳过: {st} log={list(job_q.log)}"
+        assert not any("z14-queued-ran" in l for l in job_q.log), "queued 作业不应执行"
+
+        # 不存在 / 已结束的 job → 400
+        code, d = _gui_post(base, "/api/job/nonexistent/cancel")
+        assert code == 400 and "error" in d, (code, d)
+        code, d = _gui_post(base, f"/api/job/{job.id}/cancel")
+        assert code == 400 and "error" in d, (code, d)
+    finally:
+        if srv is not None:
+            srv.shutdown()
+            srv.server_close()
+        _gui.REPO = orig_repo
+        _aud.audit_one = orig_audit_one
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------- z15. GET /api/library/files（曲库索引/过滤/分页） ----------
+
+
+@check("z15. /api/library/files：侧车与子目录排除、q/ext 过滤、分页 total 不变、size_mb 单位")
+def check_z15_library_files():
+    import gui as _gui
+
+    tmp = Path(tempfile.mkdtemp(prefix="fh_z15_"))
+    orig_repo = _gui.REPO
+    srv = None
+    try:
+        _gui.REPO = tmp
+        _runner, base, srv = _gui_http(tmp)
+        mdir = tmp / "music"
+        (mdir / "a.flac").write_bytes(b"\0" * (3 * 1048576))     # 3.0 MB
+        (mdir / "b.mp3").write_bytes(b"")
+        (mdir / "c.ogg").write_bytes(b"")
+        (mdir / "e.flac").write_bytes(b"")
+        (mdir / "f.flac").write_bytes(b"")
+        (mdir / "x.lrc").write_text("[00:01.00]x\n", encoding="utf-8")
+        (mdir / "y.jpg").write_bytes(b"\xff\xd8fake")
+        sub = mdir / "sub"
+        sub.mkdir()
+        (sub / "d.flac").write_bytes(b"")
+
+        code, d = _gui_get(base, "/api/library/files")
+        assert code == 200, (code, d)
+        assert d["music_dir"] == str(mdir), d.get("music_dir")
+        assert d["total"] == 5, f"应只索引 5 个顶层音频（lrc/jpg/子目录不计）: {d}"
+        names = {f["name"] for f in d["files"]}
+        assert names == {"a.flac", "b.mp3", "c.ogg", "e.flac", "f.flac"}, names
+        extmap = {f["name"]: f["ext"] for f in d["files"]}
+        assert extmap["a.flac"] == "flac" and extmap["b.mp3"] == "mp3" \
+            and extmap["c.ogg"] == "ogg", extmap
+        a_entry = next(f for f in d["files"] if f["name"] == "a.flac")
+        # 单位纪律：size_mb = 字节 / 1048576 保留 1 位（3145728 字节 → 3.0）
+        assert a_entry["size_mb"] == 3.0, f"3145728 字节应为 3.0MB: {a_entry}"
+        assert next(f for f in d["files"] if f["name"] == "b.mp3")["size_mb"] == 0.0
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", a_entry["mtime_h"]), a_entry
+        assert d["page"] == 1 and d["page_size"] == 50, (d["page"], d["page_size"])
+        lower_names = [f["name"].lower() for f in d["files"]]
+        assert lower_names == sorted(lower_names), f"应按文件名不区分大小写排序: {lower_names}"
+
+        # q 子串过滤（大小写不敏感）：命中 / 不命中各断言一次
+        code, d2 = _gui_get(base, "/api/library/files?q=B.MP3")
+        assert code == 200 and d2["total"] == 1 \
+            and d2["files"][0]["name"] == "b.mp3", (code, d2)
+        code, d3 = _gui_get(base, "/api/library/files?q=zzz-nohit")
+        assert d3["total"] == 0 and d3["files"] == [], d3
+
+        # ext 过滤（小写格式；兼容 ".flac" 带点传参）
+        code, d4 = _gui_get(base, "/api/library/files?ext=mp3")
+        assert d4["total"] == 1 and d4["files"][0]["name"] == "b.mp3", d4
+        code, d4b = _gui_get(base, "/api/library/files?ext=.flac")
+        assert d4b["total"] == 3 and {f["name"] for f in d4b["files"]} == \
+            {"a.flac", "e.flac", "f.flac"}, d4b
+
+        # 分页：page_size=2，page=1/2 返回不同文件且 total 不变
+        code, d5 = _gui_get(base, "/api/library/files?page_size=2&page=1")
+        code6, d6 = _gui_get(base, "/api/library/files?page_size=2&page=2")
+        assert d5["total"] == 5 == d6["total"], (d5["total"], d6["total"])
+        assert d5["page_size"] == 2 and d6["page"] == 2, (d5["page_size"], d6["page"])
+        n5 = [f["name"] for f in d5["files"]]
+        n6 = [f["name"] for f in d6["files"]]
+        assert len(n5) == 2 and len(n6) == 2, (n5, n6)
+        assert not (set(n5) & set(n6)), f"两页不应重叠: {n5} / {n6}"
+        assert n5 == ["a.flac", "b.mp3"], n5
+    finally:
+        if srv is not None:
+            srv.shutdown()
+            srv.server_close()
+        _gui.REPO = orig_repo
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------- z16. GET /api/lyrics/report（八类分组结构化包装） ----------
+
+
+@check("z16. /api/lyrics/report：八类 kind 全量、orphan/empty/no_timestamps 命中、正常文件不误报")
+def check_z16_lyrics_report():
+    import gui as _gui
+
+    tmp = Path(tempfile.mkdtemp(prefix="fh_z16_"))
+    orig_repo = _gui.REPO
+    srv = None
+    try:
+        _gui.REPO = tmp
+        _runner, base, srv = _gui_http(tmp)
+        mdir = tmp / "music"
+        # t_lyrics_check 同款语料（0 字节音频避免 ffprobe 触发 too_long/too_short）
+        (mdir / "Test - Alpha.flac").write_bytes(b"")
+        (mdir / "Test - Alpha.lrc").write_text(
+            "[ti:Test]\n[ar:Alpha]\n[00:01.00]hello world line one\n"
+            "[00:02.00]hello world line two\n[00:03.00]hello world line three\n",
+            encoding="utf-8")
+        (mdir / "Broken - Beta.flac").write_bytes(b"")
+        (mdir / "Broken - Beta.lrc").write_text("no stamps here", encoding="utf-8")
+        (mdir / "Ghost.lrc").write_text("[00:01.00]orphan\n", encoding="utf-8")
+
+        code, d = _gui_get(base, "/api/lyrics/report")
+        assert code == 200, (code, d)
+        assert d["music_dir"] == str(mdir), d.get("music_dir")
+        groups = {g["kind"]: g for g in d["groups"]}
+        eight = {"orphan", "meta_title", "meta_artist", "too_long",
+                 "too_short", "dup_content", "empty", "no_timestamps"}
+        assert set(groups) == eight, \
+            f"八类 kind 必须全量出现（count=0 也保留）: {sorted(groups)}"
+        assert all(set(g) == {"kind", "count", "files"} for g in d["groups"]), d["groups"]
+        assert all(set(f) == {"name", "issue"} and isinstance(f["issue"], str) and f["issue"]
+                   for g in d["groups"] for f in g["files"]), d["groups"]
+
+        def names_of(kind):
+            return [f["name"] for f in groups[kind]["files"]]
+
+        assert "Ghost.lrc" in names_of("orphan"), groups["orphan"]
+        assert "Broken - Beta.lrc" in names_of("empty"), groups["empty"]
+        assert "Broken - Beta.lrc" in names_of("no_timestamps"), groups["no_timestamps"]
+        assert all(g["count"] == len(g["files"]) for g in d["groups"]), "count 应等于 files 长度"
+        assert d["total"] == sum(g["count"] for g in d["groups"]) == 3, \
+            f"total 应为各组 count 之和: {d['total']}"
+        for g in d["groups"]:
+            assert all(f["name"] != "Test - Alpha.lrc" for f in g["files"]), \
+                f"正常 lrc 不得误报进 {g['kind']}: {g['files']}"
+            assert all(f["issue"].startswith(g["kind"]) for f in g["files"]), \
+                f"issue 串应以 kind 开头（人类可读）: {g}"
+    finally:
+        if srv is not None:
+            srv.shutdown()
+            srv.server_close()
+        _gui.REPO = orig_repo
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------- z17. POST /api/lyrics/delete（cross_move 可恢复删除） ----------
+
+
+@check("z17. /api/lyrics/delete：cross_move 入 staging/lrc_trash、原位消失、非法路径进 failed")
+def check_z17_lyrics_delete():
+    import gui as _gui
+
+    tmp = Path(tempfile.mkdtemp(prefix="fh_z17_"))
+    orig_repo = _gui.REPO
+    srv = None
+    try:
+        _gui.REPO = tmp
+        _runner, base, srv = _gui_http(tmp)
+        mdir = tmp / "music"
+        staging = tmp / "staging"
+        lrc1 = mdir / "Song One - A.lrc"
+        lrc2 = mdir / "Song Two - B.lrc"
+        lrc1.write_text("[00:01.00]one line\n", encoding="utf-8")
+        lrc2.write_text("[00:01.00]two line\n", encoding="utf-8")
+        jpg = mdir / "Song One - A.jpg"
+        jpg.write_bytes(b"\xff\xd8fake")
+
+        # 两个真实 .lrc + 一个不存在路径 + 一个非 .lrc 路径
+        code, d = _gui_post(base, "/api/lyrics/delete", {
+            "files": [str(lrc1), str(lrc2), str(tmp / "missing.lrc"), str(jpg)]})
+        assert code == 200, (code, d)
+        assert set(d) >= {"moved", "failed"}, d
+        assert sorted(d["moved"]) == ["Song One - A.lrc", "Song Two - B.lrc"], d
+        assert not lrc1.exists() and not lrc2.exists(), "原位置 lrc 应消失"
+        # 移入 staging/lrc_trash/<时间戳>/（cross_move 可恢复范式，绝不 unlink）
+        trash_roots = list((staging / "lrc_trash").glob("*"))
+        assert len(trash_roots) == 1, trash_roots
+        moved_files = {p.name for p in trash_roots[0].iterdir()}
+        assert moved_files == {"Song One - A.lrc", "Song Two - B.lrc"}, moved_files
+        # 非法路径进 failed 且不影响前两条
+        assert len(d["failed"]) == 2, d["failed"]
+        assert any("missing" in s for s in d["failed"]), d["failed"]
+        assert any(".jpg" in s for s in d["failed"]), d["failed"]
+        assert jpg.exists(), "非 .lrc 文件不得被移动"
+
+        # 曲库边界（独立审查 M4）：子目录 .lrc → failed(越界)；解析回曲库顶层的
+        # ../ 相对段不算越界（parent==mdir），文件不存在则报不存在
+        sub = mdir / "sub"
+        sub.mkdir()
+        sub_lrc = sub / "Nested - C.lrc"
+        sub_lrc.write_text("[00:01.00]nested\n", encoding="utf-8")
+        code, d5 = _gui_post(base, "/api/lyrics/delete", {
+            "files": [str(sub_lrc), str(mdir / "sub" / ".." / "Song Two - B.lrc")]})
+        assert code == 200, (code, d5)
+        assert any("越界" in s for s in d5["failed"]), d5["failed"]
+        assert any("不存在" in s for s in d5["failed"]), d5["failed"]
+        assert sub_lrc.exists(), "越界文件不得被移动"
+    finally:
+        if srv is not None:
+            srv.shutdown()
+            srv.server_close()
+        _gui.REPO = orig_repo
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------- z18. GET /api/rename/scan（classify_rename 纯包装 + 对抗语料） ----------
+
+
+@check("z18. /api/rename/scan：junk 命中与 classify_rename 一致、Alive/Discover/Table 对抗不误杀、lrc 不进")
+def check_z18_rename_scan():
+    import gui as _gui
+    from flac_hunter.audit import classify_rename
+
+    tmp = Path(tempfile.mkdtemp(prefix="fh_z18_"))
+    orig_repo = _gui.REPO
+    srv = None
+    try:
+        _gui.REPO = tmp
+        _runner, base, srv = _gui_http(tmp)
+        mdir = tmp / "music"
+        for s in ("Song 【MV】 - aBcDeFgHiJk", "Alive - Artist",
+                  "My Discoveries - Artist", "Table - Artist"):
+            (mdir / (s + ".flac")).write_bytes(b"")
+        (mdir / "Song 【MV】 - aBcDeFgHiJk.lrc").write_text("[00:01.00]x\n", encoding="utf-8")
+
+        code, items = _gui_get(base, "/api/rename/scan")
+        assert code == 200 and isinstance(items, list), (code, items)
+        olds = [it["old"] for it in items]
+        # 对抗语料断言：alive/discover/table 子串不得产生任何改名计划
+        # （端点是 classify_rename 纯包装，禁止自加正则/黑名单）
+        assert not any("Alive" in o or "Discover" in o or "Table" in o for o in olds), \
+            f"对抗语料被子串误杀: {olds}"
+        assert olds == ["Song 【MV】 - aBcDeFgHiJk"], f"仅 junk 语料进计划: {olds}"
+        assert not any(".lrc" in o for o in olds), "sidecar .lrc 不应进重命名计划"
+        assert all(set(it) == {"old", "new", "kinds"} for it in items), items
+        # 返回结构与直接调 classify_rename 的 (issues, proposal) 一致（纯包装断言）
+        issues, prop = classify_rename("Song 【MV】 - aBcDeFgHiJk")
+        assert items[0]["kinds"] == issues, (items[0], issues)
+        assert "junk" in items[0]["kinds"], items[0]
+        assert items[0]["new"] == prop, (items[0], prop)
+    finally:
+        if srv is not None:
+            srv.shutdown()
+            srv.server_close()
+        _gui.REPO = orig_repo
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------- z19. POST /api/rename/apply（sidecar 同步改名 + 冲突跳过） ----------
+
+
+@check("z19. /api/rename/apply：sidecar 同步改名、重放计划 skip+exists、冲突目标原样保留")
+def check_z19_rename_apply():
+    import gui as _gui
+
+    tmp = Path(tempfile.mkdtemp(prefix="fh_z19_"))
+    orig_repo = _gui.REPO
+    srv = None
+    try:
+        _gui.REPO = tmp
+        _runner, base, srv = _gui_http(tmp)
+        mdir = tmp / "music"
+        for ext in (".flac", ".jpg", ".lrc"):
+            (mdir / ("Old - Name" + ext)).write_bytes(b"")
+
+        # 1) 正常改名：音频 + .jpg/.lrc sidecar 同步生效
+        code, d = _gui_post(base, "/api/rename/apply",
+                            {"items": [{"old": "Old - Name", "new": "New - Name"}]})
+        assert code == 200, (code, d)
+        recs = d["records"]
+        assert len(recs) == 1 and recs[0]["status"] == "renamed", recs
+        for ext in (".flac", ".jpg", ".lrc"):
+            assert (mdir / ("New - Name" + ext)).is_file(), f"sidecar 未同步改名: {ext}"
+            assert not (mdir / ("Old - Name" + ext)).exists(), f"旧名残留: {ext}"
+
+        # 2) 对已改名的目标重放同计划：old 已不存在、new 已被占用 → skip 且 detail 含 exists
+        code, d2 = _gui_post(base, "/api/rename/apply",
+                             {"items": [{"old": "Old - Name", "new": "New - Name"}]})
+        r2 = d2["records"]
+        assert len(r2) == 1 and r2[0]["status"] == "skip", r2
+        assert "exists" in r2[0]["detail"], r2[0]
+
+        # 3) 冲突计划：Missing→Conflict 走端点预检 skip；New - Name→Conflict 走
+        #    apply_rename 原生 name exists（audit.py:230-231）；Conflict.flac 原样保留
+        (mdir / "Conflict.flac").write_bytes(b"")
+        code, d3 = _gui_post(base, "/api/rename/apply", {"items": [
+            {"old": "Missing Song", "new": "Conflict"},
+            {"old": "New - Name", "new": "Conflict"}]})
+        by_old = {r["old"]: r for r in d3["records"]}
+        assert by_old["Missing Song"]["status"] == "skip", by_old
+        assert "exists" in by_old["Missing Song"]["detail"], by_old["Missing Song"]
+        assert by_old["New - Name"]["status"] == "skip", by_old
+        assert "exists" in by_old["New - Name"]["detail"], by_old["New - Name"]
+        assert (mdir / "Conflict.flac").is_file() \
+            and (mdir / "Conflict.flac").stat().st_size == 0, \
+            "冲突目标 Conflict.flac 必须原样保留"
+
+        # 4) 重复计划项共享一条记录 + 含分隔符 new 预检拒绝（不阻断其余项、不留半成品）
+        code, d4 = _gui_post(base, "/api/rename/apply", {"items": [
+            {"old": "Conflict", "new": "Renamed Conflict"},
+            {"old": "Conflict", "new": "Renamed Conflict"},
+            {"old": "New - Name", "new": "../escape"}]})
+        assert code == 200, (code, d4)
+        recs4 = d4["records"]
+        assert len(recs4) == 3, recs4
+        assert recs4[0]["status"] == "renamed" and recs4[1]["status"] == "renamed", recs4
+        assert (mdir / "Renamed Conflict.flac").is_file(), "去重后改名应恰好生效一次"
+        assert recs4[2]["status"] == "skip" and "分隔符" in recs4[2]["detail"], recs4[2]
+        assert (mdir / "New - Name.flac").is_file(), "分隔符计划被拒且原文件不受影响"
+    finally:
+        if srv is not None:
+            srv.shutdown()
+            srv.server_close()
+        _gui.REPO = orig_repo
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------- z20. GET /api/fingerprint（pcm_md5 包装） ----------
+
+
+@check("z20. /api/fingerprint：同参数正弦 md5 相等无 MD5= 前缀、异频不匹配、缺参/坏路径 400")
+def check_z20_fingerprint():
+    import shutil as _shutil
+    import urllib.parse
+
+    import gui as _gui
+
+    if _shutil.which("ffmpeg") is None:
+        # 环境兜底（独立审查 L4）：无 ffmpeg 的机器上跳过而非让全套件挂红
+        print("z20 跳过：PATH 上无 ffmpeg，无法生成正弦测试音频")
+        return
+
+    tmp = Path(tempfile.mkdtemp(prefix="fh_z20_"))
+    orig_repo = _gui.REPO
+    srv = None
+    try:
+        _gui.REPO = tmp
+        _runner, base, srv = _gui_http(tmp)
+        mdir = tmp / "music"
+        fa, fb, fc = mdir / "a.flac", mdir / "b.flac", mdir / "c.flac"
+        _make_sine_flac(fa, 5.0)
+        _make_sine_flac(fb, 5.0)   # 同参数 → PCM 相同
+        _run_ff(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                 "-f", "lavfi", "-i", "sine=frequency=880:duration=5",
+                 "-c:a", "flac", str(fc)])   # 不同频率 → PCM 不同
+
+        qa = urllib.parse.quote(str(fa))
+        qb = urllib.parse.quote(str(fb))
+        qc = urllib.parse.quote(str(fc))
+        code, d = _gui_get(base, f"/api/fingerprint?a={qa}&b={qb}")
+        assert code == 200, (code, d)
+        assert d["match"] is True, d
+        assert d["a_md5"] == d["b_md5"], d
+        # 32 位小写 hex，无 "MD5=" 前缀（pcm_md5 原始输出形如 "MD5=hex"，端点负责剥前缀）
+        assert re.fullmatch(r"[0-9a-f]{32}", d["a_md5"]), \
+            f"应为 32 位小写 hex（剥 MD5= 前缀）: {d['a_md5']!r}"
+
+        code2, d2 = _gui_get(base, f"/api/fingerprint?a={qa}&b={qc}")
+        assert code2 == 200 and d2["match"] is False, (code2, d2)
+        assert d2["a_md5"] != d2["b_md5"], d2
+
+        code3, d3 = _gui_get(base, "/api/fingerprint")
+        assert code3 == 400 and "error" in d3, (code3, d3)
+        code4, d4 = _gui_get(base, "/api/fingerprint?a=nonexistent.flac&b=missing.flac")
+        assert code4 == 400 and "error" in d4, (code4, d4)
+    finally:
+        if srv is not None:
+            srv.shutdown()
+            srv.server_close()
+        _gui.REPO = orig_repo
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # ---------- z11. QQ 歌单混合编码解析（评审发现的 Gemini 回归） ----------
 
 
@@ -1744,6 +2321,25 @@ def check_z11_qq_mixed_encoding():
     assert amb == "我喜欢", f"GBK 歧义消解失败: {amb!r}"
     amb2 = _fix_mojibake("快晴".encode("utf-8").decode("latin-1"))
     assert amb2 == "快晴", f"UTF-8 含 CJK 判定失败: {amb2!r}"
+
+
+# ---------- 扩展检查加载：tests/checks_extra/*.py（并行任务新增检查用） ----------
+def _load_extra_checks() -> None:
+    xdir = Path(__file__).resolve().parent / "checks_extra"
+    if not xdir.is_dir():
+        return
+    import importlib.util
+    for f in sorted(xdir.glob("*.py")):
+        spec = importlib.util.spec_from_file_location(f"fh_extra_{f.stem}", f)
+        mod = importlib.util.module_from_spec(spec)
+        mod.check = check  # 注入注册器：扩展文件里直接 @check("z21. ...")
+        try:
+            spec.loader.exec_module(mod)
+        except Exception as e:  # noqa: BLE001
+            def _broken(exc=e):
+                raise AssertionError(f"扩展检查加载失败: {exc!r}")
+            CHECKS.append((f"extra 加载失败: {f.name}", _broken))
+_load_extra_checks()
 
 
 # ---------- 主流程 ----------
