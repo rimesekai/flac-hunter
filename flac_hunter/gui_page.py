@@ -1016,7 +1016,7 @@ button, input, select, textarea {
 .fc-table tbody td {
   padding: 8px 10px;
   vertical-align: middle;
-  max-width: 340px;
+  max-width: 210px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2307,10 +2307,12 @@ $("#btn-dl").onclick = async () => {
   const checkedCbs = allCbs.filter((c) => c.checked);
   if (checkedCbs.length === 0) return showToast("请至少勾选一首曲目再下载", "err");
 
+  const hasSelectedExisting = checkedCbs.some((c) => c.dataset.existing === "1");
+  const isManualPick = checkedCbs.length < loadedRecords.length || loadedRecords.some((r) => r.from_search);
   const body = {
     tracks: tracksPath,
     source: $("#source").value,
-    include_existing: $("#inc-ex").checked,
+    include_existing: $("#inc-ex").checked || (isManualPick && hasSelectedExisting),
     download_cover: $("#dl-cover") ? $("#dl-cover").checked : true,
     download_lyrics: $("#dl-lyrics") ? $("#dl-lyrics").checked : false,
   };
