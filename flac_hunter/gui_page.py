@@ -1373,6 +1373,12 @@ button, input, select, textarea {
         </svg>
         <span>质量审计</span>
       </button>
+      <button type="button" class="fc-nav-item" data-tab="dedupe">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="13" height="13" rx="2"/><path d="M8 20h10a2 2 0 0 0 2-2V8"/>
+        </svg>
+        <span>曲库查重</span>
+      </button>
       <button type="button" class="fc-nav-item" data-tab="jobs">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
@@ -1696,7 +1702,7 @@ button, input, select, textarea {
         <div class="fc-card-header">
           <div class="fc-card-header__start">
             <h2 class="fc-card-header__title">2 · 升级执行</h2>
-            <span class="fc-card-header__sub">仅替换 ffprobe 实测真 FLAC 的无损源，绝不有损硬转</span>
+            <span class="fc-card-header__sub">MP3/OGG 或假无损重拉真 FLAC；已是真 FLAC 仅就地补封面与标签（免重下）</span>
           </div>
         </div>
 
@@ -1786,6 +1792,49 @@ button, input, select, textarea {
         </article>
       </div>
     </section>
+
+    <section data-view="dedupe" hidden>
+      <article class="fc-card" style="margin-bottom:16px;">
+        <div class="fc-card-header">
+          <div class="fc-card-header__start">
+            <h2 class="fc-card-header__title">1 · 曲库查重扫描</h2>
+            <span class="fc-card-header__sub">按歌名、艺人别名与时长（±3s）聚类疑似重复文件，绝不自动删除，全权由你确认处理</span>
+          </div>
+          <span id="ded-summary" class="fc-chip fc-tabular">未扫描</span>
+        </div>
+        <div class="fc-block" style="margin-bottom:12px;">
+          <div class="fc-row" style="gap:8px;flex-wrap:wrap;align-items:center;">
+            <label class="fc-switch-label" for="ded-dir" style="font-weight:600;color:var(--fc-on-surface);">查重目录</label>
+            <input type="text" id="ded-dir" class="fc-input" style="flex:1;min-width:200px;" placeholder="留空则扫描当前默认曲库">
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-pick-ded-dir">选择文件夹</button>
+          </div>
+        </div>
+        <div class="fc-row" style="gap:10px;flex-wrap:wrap;">
+          <button type="button" class="fc-btn fc-btn--primary" id="btn-ded-scan">开始扫描查重</button>
+          <label class="fc-search" style="flex:1;min-width:180px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="search" id="ded-filter" placeholder="过滤歌名、艺人或文件名…">
+          </label>
+        </div>
+      </article>
+
+      <article class="fc-card">
+        <div class="fc-card-header">
+          <div class="fc-card-header__start">
+            <h2 class="fc-card-header__title">2 · 疑似重复分组</h2>
+            <span class="fc-card-header__sub">请勾选确认要清理的冗余副本；操作会移入 staging/dedupe_trash 回收站</span>
+          </div>
+          <div class="fc-row" style="gap:6px;flex-wrap:wrap;">
+            <button type="button" class="fc-btn fc-btn--sm" id="btn-ded-auto">保留最优（勾选其余）</button>
+            <button type="button" class="fc-btn fc-btn--sm" id="btn-ded-none">清空勾选</button>
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--danger" id="btn-ded-del">移入回收站 (<span id="ded-sel-count" class="fc-tabular">0</span>)</button>
+          </div>
+        </div>
+        <div id="ded-groups" class="fc-dir-list" style="max-height:520px;">
+          <div class="fc-empty">点击上方「开始扫描查重」列出曲库中可能重复的曲目分组</div>
+        </div>
+      </article>
+    </section>
   </main>
 </div>
 
@@ -1801,6 +1850,10 @@ button, input, select, textarea {
   <button type="button" class="fc-dock__item" data-tab="audit">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
     <span>审计</span>
+  </button>
+  <button type="button" class="fc-dock__item" data-tab="dedupe">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="13" height="13" rx="2"/><path d="M8 20h10a2 2 0 0 0 2-2V8"/></svg>
+    <span>查重</span>
   </button>
   <button type="button" class="fc-dock__item" data-tab="jobs">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
@@ -1853,7 +1906,7 @@ const esc = (s) => (s ?? "").toString().replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const TYPE_NAME = { prepare: "歌单查重", download: "下载", upgrade: "无损升级", audit: "质量审计", custom: "自定义" };
-const VIEW_TITLE = { import: "歌单导入", jobs: "任务列表", upgrade: "无损升级", audit: "质量审计" };
+const VIEW_TITLE = { import: "歌单导入", jobs: "任务列表", upgrade: "无损升级", audit: "质量审计", dedupe: "曲库查重" };
 const SEEDS = [
   { id: "auto", label: "自动配对（浅蓝 / 深琥珀）", color: "linear-gradient(135deg,#0A7AFF 50%,#F59E3D 50%)" },
   { id: "azure", label: "Classic Blue", h: 212, s: 100, lL: 52, lD: 63, color: "#0A7AFF" },
@@ -2656,6 +2709,13 @@ function renderUpgradeQueue() {
   ).join("");
 }
 
+function setUpgradeExtUI(extVal) {
+  if ($("#up-ext")) $("#up-ext").value = extVal;
+  document.querySelectorAll("#up-ext-seg .fc-segmented__btn").forEach((x) => {
+    x.setAttribute("aria-pressed", String(x.dataset.ext === extVal));
+  });
+}
+
 function sendAuditFilesToUpgrade(names) {
   if (!names.length) return showToast("没有可传入升级的文件", "err");
   const seen = new Set();
@@ -2668,6 +2728,7 @@ function sendAuditFilesToUpgrade(names) {
   }
   const srcDir = (auditData && auditData.music_dir) || ($("#aud-dir")?.value || "").trim();
   if (srcDir && $("#up-dir")) $("#up-dir").value = srcDir;
+  setUpgradeExtUI("flac");
   renderUpgradeQueue();
   showTab("upgrade");
   showToast(`已将 ${upgradeQueueItems.length} 个文件传入待升级清单`, "ok");
@@ -2703,7 +2764,7 @@ $("#btn-up-clear-files").onclick = () => {
   renderUpgradeQueue();
   showToast("已清空待升级清单");
 };
-$("#btn-up-scan").onclick = async () => {
+async function scanUpgradeFiles(silent = false) {
   try {
     const dir = ($("#up-dir")?.value || "").trim();
     const ext = $("#up-ext").value;
@@ -2716,9 +2777,13 @@ $("#btn-up-scan").onclick = async () => {
       name: f.name, tag: (f.ext || "").toUpperCase(), checked: true,
     }));
     renderUpgradeQueue();
-    showToast(`已载入 ${upgradeQueueItems.length} 个待升级文件`, upgradeQueueItems.length ? "ok" : "");
+    if (!silent) {
+      showToast(`已载入 ${upgradeQueueItems.length} 个待升级文件`, upgradeQueueItems.length ? "ok" : "");
+    }
   } catch (e) { showToast(e.message, "err"); }
-};
+}
+
+$("#btn-up-scan").onclick = () => scanUpgradeFiles(false);
 
 $("#btn-aud-send-sel").onclick = () => {
   const picked = [...document.querySelectorAll("#audit-files .aud-sel:checked")].map((c) => c.dataset.name).filter(Boolean);
@@ -2772,8 +2837,8 @@ $("#btn-aud-pick-none").onclick = () => {
 
 document.querySelectorAll("#up-ext-seg .fc-segmented__btn").forEach((b) => {
   b.onclick = () => {
-    document.querySelectorAll("#up-ext-seg .fc-segmented__btn").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-    $("#up-ext").value = b.dataset.ext;
+    setUpgradeExtUI(b.dataset.ext);
+    scanUpgradeFiles(true);
   };
 });
 
@@ -2815,6 +2880,128 @@ $("#btn-audit").onclick = async () => {
       showToast("曲库质量审计完成");
     });
     showTab("jobs");
+  } catch (e) { showToast(e.message, "err"); }
+};
+
+/* ---------- Dedupe View ---------- */
+let dedupeGroups = [];
+let dedupeMusicDir = "";
+const dedupeSelected = new Set();
+
+function fmtSizeMB(bytes) {
+  if (!bytes) return "-";
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function renderDedupeGroups() {
+  const kw = ($("#ded-filter")?.value || "").toLowerCase();
+  $("#ded-sel-count").textContent = String(dedupeSelected.size);
+  if (!dedupeGroups.length) {
+    $("#ded-groups").innerHTML = '<div class="fc-empty">未发现疑似重复的曲目分组（或尚未扫描）</div>';
+    return;
+  }
+  const shown = dedupeGroups.filter((g) => {
+    if (!kw) return true;
+    const hay = [g.title_key, g.artist_key, ...(g.members || []).map((m) => m.file)].join(" ").toLowerCase();
+    return hay.includes(kw);
+  });
+  if (!shown.length) {
+    $("#ded-groups").innerHTML = '<div class="fc-hint" style="padding:12px;text-align:center;">没有匹配过滤关键词的重复分组</div>';
+    return;
+  }
+  $("#ded-groups").innerHTML = shown.map((g, gi) => {
+    const rows = (g.members || []).map((m) => {
+      const checked = dedupeSelected.has(m.file) ? "checked" : "";
+      const meta = [
+        (m.ext || "").toUpperCase(),
+        m.bitrate_kbps ? `${m.bitrate_kbps} kbps` : "",
+        m.duration ? fmtDur(Math.round(m.duration * 1000)) : "",
+        fmtSizeMB(m.size),
+      ].filter(Boolean).join(" · ");
+      return `<label class="fc-dir-item" style="justify-content:space-between;cursor:pointer;">` +
+        `<span class="fc-row" style="gap:8px;flex:1;min-width:0;">` +
+          `<input type="checkbox" class="ded-cb" data-file="${esc(m.file)}" ${checked}>` +
+          `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(m.file)}">${esc(m.file)}</span>` +
+        `</span>` +
+        `<span class="fc-chip fc-tabular" style="flex:none;">${esc(meta)}</span>` +
+      `</label>`;
+    }).join("");
+    return `<div class="fc-block" style="margin-bottom:10px;padding:10px 12px;">` +
+      `<div class="fc-row" style="justify-content:space-between;margin-bottom:8px;">` +
+        `<strong style="font-size:13px;">#${gi + 1} · ${esc(g.title_key || "未知标题")} — ${esc(g.artist_key || "未知艺人")}</strong>` +
+        `<span class="fc-chip fc-tabular">${(g.members || []).length} 个文件</span>` +
+      `</div>` +
+      rows +
+    `</div>`;
+  }).join("");
+}
+
+async function scanDedupe() {
+  try {
+    $("#btn-ded-scan").disabled = true;
+    $("#ded-summary").textContent = "扫描中…";
+    const dir = ($("#ded-dir")?.value || "").trim();
+    const q = dir ? `?dir=${encodeURIComponent(dir)}` : "";
+    const res = await api("/api/dedupe" + q);
+    dedupeMusicDir = res.music_dir || dir;
+    if (res.music_dir && $("#ded-dir") && !dir) $("#ded-dir").value = res.music_dir;
+    dedupeGroups = res.groups || [];
+    dedupeSelected.clear();
+    $("#ded-summary").textContent = `${res.total_groups || 0} 组 · ${res.total_files || 0} 个文件`;
+    renderDedupeGroups();
+    showToast(dedupeGroups.length ? `发现 ${dedupeGroups.length} 组疑似重复` : "未发现重复曲目", dedupeGroups.length ? "" : "ok");
+  } catch (e) {
+    $("#ded-summary").textContent = "扫描失败";
+    showToast(e.message, "err");
+  } finally {
+    $("#btn-ded-scan").disabled = false;
+  }
+}
+
+$("#btn-ded-scan").onclick = scanDedupe;
+if ($("#btn-pick-ded-dir")) $("#btn-pick-ded-dir").onclick = () => openDirPicker("#ded-dir");
+$("#ded-filter").oninput = renderDedupeGroups;
+$("#ded-groups").onchange = (e) => {
+  if (!e.target.classList.contains("ded-cb")) return;
+  const f = e.target.dataset.file;
+  if (!f) return;
+  if (e.target.checked) dedupeSelected.add(f);
+  else dedupeSelected.delete(f);
+  $("#ded-sel-count").textContent = String(dedupeSelected.size);
+};
+$("#btn-ded-auto").onclick = () => {
+  dedupeSelected.clear();
+  for (const g of dedupeGroups) {
+    const sorted = [...(g.members || [])].sort((a, b) => {
+      const fa = a.ext === "flac" ? 1 : 0;
+      const fb = b.ext === "flac" ? 1 : 0;
+      if (fb !== fa) return fb - fa;
+      if ((b.bitrate_kbps || 0) !== (a.bitrate_kbps || 0)) return (b.bitrate_kbps || 0) - (a.bitrate_kbps || 0);
+      return (b.size || 0) - (a.size || 0);
+    });
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i]?.file) dedupeSelected.add(sorted[i].file);
+    }
+  }
+  renderDedupeGroups();
+  showToast(`已按「FLAC / 高码率 / 大文件优先」勾选 ${dedupeSelected.size} 个副本，请核对后操作`);
+};
+$("#btn-ded-none").onclick = () => {
+  dedupeSelected.clear();
+  renderDedupeGroups();
+};
+$("#btn-ded-del").onclick = async () => {
+  const files = [...dedupeSelected];
+  if (!files.length) return showToast("请先勾选要清理的副本文件", "err");
+  if (!confirm(`确认将选中的 ${files.length} 个重复文件移入回收站（staging/dedupe_trash）？`)) return;
+  try {
+    const res = await api("/api/dedupe/delete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ music_dir: dedupeMusicDir || ($("#ded-dir")?.value || "").trim(), files }),
+    });
+    showToast(`已移入回收站 ${(res.moved || []).length} 个文件`, "ok");
+    await scanDedupe();
+    refreshState();
   } catch (e) { showToast(e.message, "err"); }
 };
 

@@ -1671,6 +1671,7 @@ def check_z13_cover_lyrics_and_upgrade_repair():
                  download_cover=True, download_lyrics=False)
     cmd = r._download_cmd(j, "k1")
     assert "--no-lyrics" in cmd and "--no-cover" not in cmd
+    assert 'data-tab="dedupe"' in PAGE_HTML and "/api/dedupe/delete" in PAGE_HTML
 
 
 # ---------- 主流程 ----------

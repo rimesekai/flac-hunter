@@ -413,7 +413,14 @@ def cmd_upgrade(args):
         raw = json.loads(Path(args.files).read_text(encoding="utf-8"))
         if isinstance(raw, list):
             only_files = [str(x) for x in raw if str(x).strip()]
-    run_upgrade(cfg, ext=args.ext, full_retry=args.full_retry, limit=args.limit, only_files=only_files)
+    res = run_upgrade(cfg, ext=args.ext, full_retry=args.full_retry, limit=args.limit, only_files=only_files)
+    if isinstance(res, list) and res and isinstance(res[0], dict) and isinstance(res[0].get("summary"), dict):
+        s = res[0]["summary"]
+        print(
+            f"[upgrade] 汇总: 共 {s.get('total', 0)} 个 · "
+            f"已升级 {s.get('upgraded', 0)} · 跳过/保留 {s.get('kept', 0)} · 失败 {s.get('failed', 0)}",
+            flush=True,
+        )
     _log("upgrade 完成")
 
 

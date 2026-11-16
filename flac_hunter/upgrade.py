@@ -255,7 +255,7 @@ def _remux_flac(src: Path, out: Path, title: str, artist: str, cover: Path | Non
 
 def _repair_existing_flac(p: Path, music_dir: Path, stem: str, title: str,
                           artist: str, sid: str | None, search_fn) -> tuple[bool, str]:
-    """当输入本身已是 .flac 且无损源未拉到时，尝试就地补封面与标签。"""
+    """当输入本身已是 .flac 时，就地补齐封面与标签（免重下整首音频）。"""
     cover = music_dir / f"{stem}.jpg"
     if not cover.exists() and search_fn is None and sid:
         _fetch_netease_cover(sid, cover)
@@ -272,6 +272,26 @@ def _repair_existing_flac(p: Path, music_dir: Path, stem: str, title: str,
     except Exception as e:
         tmp_final.unlink(missing_ok=True)
         return False, str(e)[:200]
+
+
+def _is_real_flac(p: Path) -> bool:
+    """用 ffprobe 确认文件音频流确为 flac 且时长合法。"""
+    if p.suffix.lower() != ".flac":
+        return False
+    try:
+        from . import ffmpeg
+        info = ffmpeg.probe_full(str(p))
+        audio = next((st for st in (info.get("streams") or [])
+                      if st.get("codec_type") == "audio"), None)
+        codec = ((audio or {}).get("codec_name") or "").lower()
+        dur = float((info.get("format") or {}).get("duration") or 0.0)
+        return codec == "flac" and dur >= MIN_DUR
+    except Exception:
+        return False
+
+
+def _log_up(msg: str) -> None:
+    print(msg, flush=True)
 
 
 # ---------- 主流程 ----------
@@ -364,6 +384,8 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
                        if f.lower().endswith(exts))
     results: list[dict] = []
     upgraded = 0
+    total_files = len(files)
+    _log_up(f"[upgrade] 共 {total_files} 个文件待处理（目录: {music_dir}）")
     for idx, fname in enumerate(files, 1):
         p = music_dir / fname
         stem = p.stem
@@ -372,17 +394,20 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
         # permanent_skip 子串匹配文件名：优先级最高
         if any(s and s in fname for s in permanent_skip):
             rec["status"] = "permanent_skip"
+            _log_up(f"[upgrade] ({idx}/{total_files}) {fname} -> 永久跳过")
             results.append(rec)
             continue
         # 同文件无匹配 ≥2 次跳过（full_retry 已清空）
         if skip.get(fname, 0) >= 2:
             rec["status"] = "skipped_fails"
             rec["fails"] = skip[fname]
+            _log_up(f"[upgrade] ({idx}/{total_files}) {fname} -> 跳名单略过（连续失败 {skip[fname]} 次）")
             results.append(rec)
             continue
         if limit is not None and len([r for r in results if r["status"] not in
                                       ("permanent_skip", "skipped_fails")]) >= limit:
             break
+        _log_up(f"[upgrade] ({idx}/{total_files}) 正在处理: {fname}")
 
         sdur, in_br, t_title, t_artist = _probe_meta(str(p))
         sdur = sdur or 0.0
@@ -436,25 +461,33 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
             _bump_match_fails(skip, fname, fails_path)
             rec["status"] = "no_match"
             rec["fails"] = skip[fname]
+            _log_up(f"[upgrade] ({idx}/{total_files}) {fname} -> 未匹配到网易云条目")
             results.append(rec)
             continue
 
         is_flac_input = p.suffix.lower() == ".flac"
+        if is_flac_input and _is_real_flac(p):
+            # 已是真 FLAC：仅就地补齐封面与标签，免重下整首音频
+            repaired, rep_err = _repair_existing_flac(p, music_dir, stem, title, artist, sid, search_fn)
+            if repaired:
+                rec["status"] = "upgraded"
+                rec["mode"] = "cover_tags_only"
+                rec["final"] = p.name
+                rec["src_ext"] = ".flac"
+                upgraded += 1
+                _log_up(f"[upgrade] ({idx}/{total_files}) {fname} -> 已补封面/标签（真 FLAC 免重下）")
+            else:
+                rec["status"] = "no_cover"
+                _log_up(f"[upgrade] ({idx}/{total_files}) {fname} -> 补封面失败（{rep_err}）")
+            results.append(rec)
+            continue
 
         # GDStudio get_url 阶梯
         url_res = _get_url(sid)
         url, src_br_tag = url_res[0], int(url_res[1] or 0)
         if not url:
-            if is_flac_input:
-                repaired, rep_err = _repair_existing_flac(p, music_dir, stem, title, artist, sid, search_fn)
-                if repaired:
-                    rec["status"] = "upgraded"
-                    rec["final"] = p.name
-                    rec["src_ext"] = ".flac"
-                    upgraded += 1
-                    results.append(rec)
-                    continue
             rec["status"] = "no_url"
+            _log_up(f"[upgrade] ({idx}/{total_files}) {fname} -> 无可用直链")
             results.append(rec)
             continue
         raw_ext = guess_ext_from_url(url)
@@ -468,18 +501,10 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
 
         # mp3/flac 输入：仅声称无损（.flac 后缀或 br>=999000）才下载进入实测确认
         if not is_ogg_input and not claims_lossless:
-            if is_flac_input:
-                repaired, rep_err = _repair_existing_flac(p, music_dir, stem, title, artist, sid, search_fn)
-                if repaired:
-                    rec["status"] = "upgraded"
-                    rec["final"] = p.name
-                    rec["src_ext"] = ".flac"
-                    upgraded += 1
-                    results.append(rec)
-                    continue
             rec["status"] = "not_lossless"
             rec["src_ext"] = raw_ext
             rec["src_br"] = src_br_tag
+            _log_up(f"[upgrade] ({idx}/{total_files}) {fname} -> 非无损源（{raw_ext} / {src_br_tag}），保留原文件")
             results.append(rec)
             continue
 
@@ -490,6 +515,7 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
         except Exception as e:
             rec["status"] = "download_error"
             rec["error"] = str(e)[:200]
+            _log_up(f"[upgrade] ({idx}/{total_files}) {fname} -> 下载失败（{rec['error'][:60]}）")
             results.append(rec)
             continue
         ndur = None
@@ -501,6 +527,7 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
             tmp.unlink(missing_ok=True)
             rec["status"] = "duration_mismatch"
             rec["ndur"] = ndur
+            _log_up(f"[upgrade] ({idx}/{total_files}) {fname} -> 时长不符（{ndur}s），跳过")
             results.append(rec)
             continue
 
@@ -626,6 +653,7 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
         rec["status"] = "upgraded"
         rec["final"] = final.name
         rec["src_ext"] = ".flac" if src_lossless else raw_ext
+        _log_up(f"[upgrade] ({idx}/{total_files}) {fname} -> 已升级为 {final.name}")
         if src_lossless:
             rec["ndur"] = round(ndur, 1)
         if need_pcm:

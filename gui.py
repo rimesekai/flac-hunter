@@ -13,6 +13,7 @@ import argparse
 import inspect
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -205,14 +206,34 @@ class Runner:
         job.log.append(f"[runner] {' '.join(job.cmd)}")
         t = threading.Thread(target=_tail_results, args=(job,), daemon=True)
         t.start()
+        env = dict(os.environ)
+        env["PYTHONUNBUFFERED"] = "1"
         proc = subprocess.Popen(
-            job.cmd, cwd=str(job.cwd),
+            job.cmd, cwd=str(job.cwd), env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         assert proc.stdout is not None
         for raw in iter(proc.stdout.readline, b""):
             line = raw.decode("utf-8", "replace").rstrip("\r\n")
             if line:
                 job.log.append(line)
+                m = re.match(r"^\[upgrade\]\s*\((\d+)/(\d+)\)\s*(.*)$", line)
+                if m:
+                    cur, tot, detail = int(m.group(1)), int(m.group(2)), m.group(3)
+                    job.total = max(job.total, tot)
+                    if "->" in detail:
+                        job.done = max(job.done, cur)
+                    job.summary = f"无损升级 {cur}/{tot} · {detail[:48]}"
+                ms = re.match(r"^\[upgrade\]\s*汇总:\s*共\s*(\d+)\s*个\s*·\s*已升级\s*(\d+)\s*·\s*跳过/保留\s*(\d+)\s*·\s*失败\s*(\d+)", line)
+                if ms:
+                    tot, up_n, kept_n, fail_n = (int(ms.group(i)) for i in range(1, 5))
+                    job.total = max(job.total, tot)
+                    job.done = tot
+                    counts = {"upgraded": up_n}
+                    if kept_n:
+                        counts["kept"] = kept_n
+                    if fail_n:
+                        counts["failed"] = fail_n
+                    job.status_counts = counts
         proc.wait()
         job.exit_code = proc.returncode
         job._stop_tail.set()
@@ -658,6 +679,45 @@ class Handler(BaseHTTPRequestHandler):
                 if f.is_file() and f.suffix.lower() in exts
             ]
             self._json({"music_dir": str(mdir), "files": items})
+        elif self.path.startswith("/api/dedupe"):
+            from flac_hunter.library import find_dups
+            qs = parse_qs(urlparse(self.path).query)
+            raw_dir = (qs.get("dir", [""])[0] or "").strip()
+            if "\x00" in raw_dir:
+                self._json({"error": "查重目录路径非法"}, 400)
+                return
+            mdir = Path(raw_dir or str(self.runner.cfg.paths.music)).expanduser()
+            if not mdir.is_dir():
+                self._json({"error": f"目录不存在: {mdir}"}, 400)
+                return
+            groups = find_dups(mdir, self.runner.cfg, print_fn=None)
+            enriched = []
+            for g in groups:
+                mems = []
+                for m in g.get("members") or []:
+                    fname = str(m.get("file") or "")
+                    fp = mdir / fname
+                    sz = fp.stat().st_size if fp.is_file() else 0
+                    br = m.get("bit_rate")
+                    kbps = round(float(br) / 1000) if br else 0
+                    mems.append({
+                        "file": fname,
+                        "ext": fp.suffix.lower().lstrip("."),
+                        "size": sz,
+                        "duration": m.get("duration"),
+                        "bitrate_kbps": kbps,
+                    })
+                enriched.append({
+                    "title_key": g.get("title_key") or "",
+                    "artist_key": g.get("artist_key") or "",
+                    "members": mems,
+                })
+            self._json({
+                "music_dir": str(mdir),
+                "groups": enriched,
+                "total_groups": len(enriched),
+                "total_files": sum(len(g["members"]) for g in enriched),
+            })
         elif self.path == "/api/audit/last":
             p = REPO / "tasks" / "gui" / "last_audit.json"
             if p.exists():
@@ -752,16 +812,18 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("曲库目录路径非法")
                 if up_dir:
                     cmd.extend(["--music-dir", str(Path(up_dir).expanduser())])
+                up_total = 0
                 raw_files = body.get("files")
                 if isinstance(raw_files, list):
                     cleaned = [Path(str(x)).name for x in raw_files if str(x).strip()]
                     if not cleaned:
                         raise ValueError("待升级文件列表为空")
+                    up_total = len(cleaned)
                     fpath = REPO / "tasks" / "gui" / f"upgrade_files_{uuid.uuid4().hex[:8]}.json"
                     fpath.parent.mkdir(parents=True, exist_ok=True)
                     fpath.write_text(json.dumps(cleaned, ensure_ascii=False), encoding="utf-8")
                     cmd.extend(["--files", str(fpath)])
-                job = r.submit("upgrade", cmd, music_dir=up_dir)
+                job = r.submit("upgrade", cmd, total=up_total, music_dir=up_dir)
                 self._json(job)
             elif self.path.endswith("/pause") and self.path.startswith("/api/job/"):
                 jid = self.path.split("/")[3]
@@ -787,6 +849,44 @@ class Handler(BaseHTTPRequestHandler):
                     aud_files = [Path(str(x)).name for x in raw_files if str(x).strip()]
                 job = r.submit("audit", None, music_dir=aud_dir, audit_files=aud_files)  # 服务内直跑，不走子进程
                 self._json(job)
+            elif self.path == "/api/dedupe/delete":
+                from flac_hunter.util import cross_move
+                raw_dir = str(body.get("music_dir") or "").strip()
+                if "\x00" in raw_dir:
+                    raise ValueError("查重目录路径非法")
+                mdir = Path(raw_dir or str(r.cfg.paths.music)).expanduser()
+                if not mdir.is_dir():
+                    raise ValueError(f"目录不存在: {mdir}")
+                raw_files = body.get("files")
+                if not isinstance(raw_files, list) or not raw_files:
+                    raise ValueError("请先勾选要清理的重复文件")
+                trash_dir = Path(r.cfg.paths.staging) / "dedupe_trash" / time.strftime("%Y%m%d_%H%M%S")
+                trash_dir.mkdir(parents=True, exist_ok=True)
+                moved: list[str] = []
+                errs: list[str] = []
+                mdir_resolved = mdir.resolve()
+                for item in raw_files:
+                    fname = Path(str(item)).name
+                    if not fname:
+                        continue
+                    fp = (mdir / fname)
+                    if not fp.is_file() or fp.resolve().parent != mdir_resolved:
+                        errs.append(f"跳过不存在或越界文件: {fname}")
+                        continue
+                    if fp.suffix.lower() not in AUDIO_EXT:
+                        errs.append(f"跳过非音频文件: {fname}")
+                        continue
+                    try:
+                        cross_move(fp, trash_dir / fname)
+                        moved.append(fname)
+                    except Exception as exc:
+                        errs.append(f"{fname}: {exc}")
+                self._json({
+                    "moved": moved,
+                    "trash_dir": str(trash_dir),
+                    "errors": errs,
+                    "library": _library_counts(r.cfg.paths.music),
+                })
             elif self.path == "/api/config/music-dir":
                 raw_dir = str(body.get("music_dir") or "").strip()
                 if not raw_dir or "\x00" in raw_dir:
