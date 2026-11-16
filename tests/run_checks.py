@@ -1654,15 +1654,23 @@ def check_z12_gui_http_security():
 def check_z13_cover_lyrics_and_upgrade_repair():
     from flac_hunter.gui_page import PAGE_HTML
     import cli as _cli
+    import gui as _gui
     import flac_hunter.upgrade as _upg
 
     assert 'id="dl-cover"' in PAGE_HTML and 'id="dl-lyrics"' in PAGE_HTML
+    assert 'id="dl-lyrics" class="fc-switch">' in PAGE_HTML
     assert "download_cover" in PAGE_HTML and "download_lyrics" in PAGE_HTML
     assert hasattr(_upg, "json") and callable(getattr(_upg, "_repair_existing_flac", None))
 
     parser = _cli.build_parser()
     ns = parser.parse_args(["download", "--tracks", "t.json", "--no-cover", "--no-lyrics"])
     assert ns.no_cover is True and ns.no_lyrics is True
+
+    r = _gui.Runner(_gui.load_config())
+    j = _gui.Job("j1", "download", None, Path("."), total=1, tracks_path="t.json",
+                 download_cover=True, download_lyrics=False)
+    cmd = r._download_cmd(j, "k1")
+    assert "--no-lyrics" in cmd and "--no-cover" not in cmd
 
 
 # ---------- 主流程 ----------

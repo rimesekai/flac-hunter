@@ -1584,7 +1584,7 @@ button, input, select, textarea {
             <span>下载封面</span>
           </label>
           <label class="fc-switch-label">
-            <input type="checkbox" id="dl-lyrics" class="fc-switch" checked>
+            <input type="checkbox" id="dl-lyrics" class="fc-switch">
             <span>下载歌词</span>
           </label>
           <label class="fc-switch-label">
@@ -2256,7 +2256,7 @@ $("#btn-dl").onclick = async () => {
     source: $("#source").value,
     include_existing: $("#inc-ex").checked,
     download_cover: $("#dl-cover") ? $("#dl-cover").checked : true,
-    download_lyrics: $("#dl-lyrics") ? $("#dl-lyrics").checked : true,
+    download_lyrics: $("#dl-lyrics") ? $("#dl-lyrics").checked : false,
   };
   const dlDir = ($("#dl-dir")?.value || "").trim();
   if (dlDir) body.music_dir = dlDir;
