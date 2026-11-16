@@ -1727,7 +1727,7 @@ def check_z11_qq_mixed_encoding():
 
     # 形态三：同一包里歌名一 GBK 一 UTF-8（真实嵌合体，整包解码必废）
     raw_mix = (b'{"code":0,"cdlist":[{"songlist":['
-               b'{"songname":"' + "夜明けと蛍".encode("gbk") + b'},'
+               b'{"songname":"' + "夜明けと蛍".encode("gbk") + b'"},'
                b'{"songname":"' + "快晴".encode("utf-8") + b'"}]}]}')
     songs3 = _parse_qq_response(raw_mix)
     names = [s.get("songname") for s in songs3]
@@ -1736,6 +1736,14 @@ def check_z11_qq_mixed_encoding():
     # 空歌单/坏包：返回空列表而非抛异常
     assert _parse_qq_response(b'{"code":0,"cdlist":[{"songlist":[]}]}') == []
     assert _parse_qq_response(b'not-json') == []
+
+    # 单字符串歧义消解：GBK「我喜欢的歌」恰好也是合法 UTF-8（解成欧洲字符
+    # 零 CJK）——方向性规则必须判给 GB18030
+    from flac_hunter.spotify_cli import _fix_mojibake
+    amb = _fix_mojibake("我喜欢".encode("gbk").decode("latin-1"))
+    assert amb == "我喜欢", f"GBK 歧义消解失败: {amb!r}"
+    amb2 = _fix_mojibake("快晴".encode("utf-8").decode("latin-1"))
+    assert amb2 == "快晴", f"UTF-8 含 CJK 判定失败: {amb2!r}"
 
 
 # ---------- 主流程 ----------

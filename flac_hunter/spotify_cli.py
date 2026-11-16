@@ -94,16 +94,20 @@ def _cjk_score(s: str) -> int:
 
 
 def _fix_mojibake(s: str) -> str:
-    """修复单个字符串的乱码：高位字节还原回原始字节后按 UTF-8 / GB18030 竞争解码。
+    """修复单个字符串的乱码：高位字节还原回原始字节后按 UTF-8 / GB18030 有向消歧。
 
-    GBK 字节对大多恰好也是合法 UTF-8 序列（会「成功」解成希腊/西里尔字母
-    垃圾且无替换符），单看是否解得动无法消歧——按中日文字符密度评分，
-    歌名元数据的语言语境下谁解出的 CJK 多谁赢；平手取 UTF-8。
+    歧义是双向的：GBK 字节对大多恰好也是合法 UTF-8（解成希腊/西里尔字母
+    垃圾），而 UTF-8 的 CJK 字节对在 GB18030 下也常解成 CJK 垃圾——所以
+    计数比多少没用。用方向性规则：
+    ① UTF-8 严格解码成功且含任何 CJK → 必是真 UTF-8（GBK 误读成 UTF-8
+       只会产生欧洲区字符，不会产生 CJK）；
+    ② 否则 GB18030 解码含 CJK → 判 GBK；
+    ③ 都不含 CJK → 平手取 UTF-8（ASCII 情形两者等价）。
     """
     if not any("\x80" <= c <= "\xff" for c in s):
         return s  # 纯 ASCII，无需处理
     raw = s.encode("latin-1", errors="ignore")
-    best = None  # (cjk 数, 文本)；平手取先到的 UTF-8
+    cands: dict = {}
     for enc in ("utf-8", "gb18030"):
         try:
             fixed = raw.decode(enc)
@@ -111,12 +115,14 @@ def _fix_mojibake(s: str) -> str:
             continue
         if "\ufffd" in fixed:
             continue
-        score = _cjk_score(fixed)
-        if best is None or score > best[0]:
-            best = (score, fixed)
-    if best is None:
-        return raw.decode("gb18030", errors="replace")
-    return best[1]
+        cands[enc] = fixed
+    if "utf-8" in cands and _cjk_score(cands["utf-8"]) > 0:
+        return cands["utf-8"]
+    if "gb18030" in cands and _cjk_score(cands["gb18030"]) > 0:
+        return cands["gb18030"]
+    if "utf-8" in cands:
+        return cands["utf-8"]
+    return raw.decode("gb18030", errors="replace")
 
 
 def _deep_fix(obj):
