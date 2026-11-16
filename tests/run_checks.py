@@ -1673,6 +1673,17 @@ def check_z13_cover_lyrics_and_upgrade_repair():
     assert "--no-lyrics" in cmd and "--no-cover" not in cmd
     assert 'data-tab="dedupe"' in PAGE_HTML and "/api/dedupe/delete" in PAGE_HTML
 
+    from flac_hunter.library import find_dups_candidates
+    import tempfile, shutil
+    td = Path(tempfile.mkdtemp())
+    try:
+        (td / "Alice in 冷凍庫 (Single Version) - 花譜.mp3").write_bytes(b"a")
+        (td / "Alice in 冷凍庫（翻唱） - 花谱 _ kaf.mp3").write_bytes(b"b")
+        cands = find_dups_candidates(td)
+        assert len(cands) == 1 and len(cands[0]["members"]) == 2
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
 
 # ---------- 主流程 ----------
 

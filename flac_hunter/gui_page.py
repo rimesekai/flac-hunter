@@ -2929,7 +2929,10 @@ function renderDedupeGroups() {
     return `<div class="fc-block" style="margin-bottom:10px;padding:10px 12px;">` +
       `<div class="fc-row" style="justify-content:space-between;margin-bottom:8px;">` +
         `<strong style="font-size:13px;">#${gi + 1} · ${esc(g.title_key || "未知标题")} — ${esc(g.artist_key || "未知艺人")}</strong>` +
-        `<span class="fc-chip fc-tabular">${(g.members || []).length} 个文件</span>` +
+        `<div class="fc-row" style="gap:6px;">` +
+          (g.reason ? `<span class="fc-chip">${esc(g.reason)}</span>` : "") +
+          `<span class="fc-chip fc-tabular">${(g.members || []).length} 个文件</span>` +
+        `</div>` +
       `</div>` +
       rows +
     `</div>`;

@@ -388,3 +388,73 @@ def find_dups(music_dir, cfg=None, print_fn=print):
     if print_fn:
         print_fn(f"total audio: {len(files)} | duplicate groups: {len(out)}")
     return out
+
+
+def _core_title_key(title: str) -> str:
+    """查重候选专用核心标题：剥括号后缀、繁转简并统一标点空白。"""
+    from .match.normalize import t2s
+    bare = re.sub(r"[\(（\[【].*?[\)）\]】]", "", title).strip()
+    s = t2s(bare or title)
+    s = re.sub(r"['’`\"“”_·・\s\-]+", "", s).lower()
+    return s
+
+
+def find_dups_candidates(music_dir, cfg=None) -> list[dict]:
+    """宽松疑似重复聚类（供 GUI 人工核对）：核心歌名相同且（时长差<=4s 或艺人相近）。"""
+    canon_map = _canon_map(_alias_groups_from_cfg(cfg))
+    music_dir = Path(music_dir)
+    files = sorted(f for f in os.listdir(music_dir) if Path(f).suffix.lower() in AUDIO_EXT)
+    rows = []
+    for f in files:
+        stem = Path(f).stem
+        title, artist = stem.rsplit(" - ", 1) if " - " in stem else (stem, "")
+        try:
+            meta = probe_meta(music_dir / f)
+        except Exception:
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        rows.append((
+            f,
+            _core_title_key(title),
+            artist_key(artist, canon_map),
+            meta.get("duration"),
+            meta.get("bit_rate"),
+        ))
+
+    groups: list[dict] = []
+    used: set[str] = set()
+    for i, (f1, kt1, ka1, d1, br1) in enumerate(rows):
+        if f1 in used or not kt1:
+            continue
+        grp = [(f1, ka1, d1, br1)]
+        has_same_dur = False
+        has_same_art = False
+        for j in range(i + 1, len(rows)):
+            f2, kt2, ka2, d2, br2 = rows[j]
+            if f2 in used or kt2 != kt1:
+                continue
+            same_dur = bool(d1 and d2 and abs(d1 - d2) <= 4.0)
+            same_art = bool(ka1 and ka2 and (ka1 == ka2 or ka1 in ka2 or ka2 in ka1))
+            if same_dur or same_art:
+                if same_dur:
+                    has_same_dur = True
+                if same_art:
+                    has_same_art = True
+                grp.append((f2, ka2, d2, br2))
+        if len(grp) > 1:
+            for item in grp:
+                used.add(item[0])
+            reasons = []
+            if has_same_dur:
+                reasons.append("同长(≤4s)")
+            if has_same_art:
+                reasons.append("同艺人")
+            groups.append({
+                "title_key": kt1,
+                "artist_key": ka1,
+                "reason": " · ".join(reasons) or "同歌名",
+                "members": [{"file": x[0], "duration": x[2], "bit_rate": x[3]} for x in grp],
+            })
+    groups.sort(key=lambda g: (-len(g["members"]), g["title_key"]))
+    return groups

@@ -680,7 +680,7 @@ class Handler(BaseHTTPRequestHandler):
             ]
             self._json({"music_dir": str(mdir), "files": items})
         elif self.path.startswith("/api/dedupe"):
-            from flac_hunter.library import find_dups
+            from flac_hunter.library import find_dups_candidates
             qs = parse_qs(urlparse(self.path).query)
             raw_dir = (qs.get("dir", [""])[0] or "").strip()
             if "\x00" in raw_dir:
@@ -690,7 +690,7 @@ class Handler(BaseHTTPRequestHandler):
             if not mdir.is_dir():
                 self._json({"error": f"目录不存在: {mdir}"}, 400)
                 return
-            groups = find_dups(mdir, self.runner.cfg, print_fn=None)
+            groups = find_dups_candidates(mdir, self.runner.cfg)
             enriched = []
             for g in groups:
                 mems = []
@@ -710,6 +710,7 @@ class Handler(BaseHTTPRequestHandler):
                 enriched.append({
                     "title_key": g.get("title_key") or "",
                     "artist_key": g.get("artist_key") or "",
+                    "reason": g.get("reason") or "",
                     "members": mems,
                 })
             self._json({
