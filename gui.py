@@ -56,7 +56,8 @@ class Job:
                  tracks_list: list | None = None, source: str = "auto",
                  include_existing: bool = False, music_dir: str = "",
                  audit_files: list[str] | None = None,
-                 download_cover: bool = True, download_lyrics: bool = True):
+                 download_cover: bool = True, download_lyrics: bool = True,
+                 list_text: str | None = None):
         self.id = jid
         self.type = jtype
         self.cmd = cmd
@@ -70,6 +71,7 @@ class Job:
         self.audit_files = audit_files          # 质量审计选定文件列表（None 表示全库）
         self.download_cover = download_cover
         self.download_lyrics = download_lyrics
+        self.list_text = list_text              # 含无歌手歌名时的文本清单展开原文
         self.status = "queued"
         self.exit_code: int | None = None
         self.started = time.time()
@@ -148,13 +150,15 @@ class Runner:
                tracks_path: str | None = None, tracks_list: list | None = None,
                source: str = "auto", include_existing: bool = False,
                music_dir: str = "", audit_files: list[str] | None = None,
-               download_cover: bool = True, download_lyrics: bool = True) -> dict:
+               download_cover: bool = True, download_lyrics: bool = True,
+               list_text: str | None = None) -> dict:
         jid = uuid.uuid4().hex[:10]
         job = Job(jid, jtype, cmd, REPO, total=total, tracks_path=tracks_path,
                   tracks_list=tracks_list, source=source,
                   include_existing=include_existing, music_dir=music_dir,
                   audit_files=audit_files,
-                  download_cover=download_cover, download_lyrics=download_lyrics)
+                  download_cover=download_cover, download_lyrics=download_lyrics,
+                  list_text=list_text)
         with self.lock:
             self.jobs[jid] = job
             self.order.append(jid)
@@ -179,6 +183,10 @@ class Runner:
                         job.exit_code = 0
                 elif job.type == "download" and job.tracks_list is not None:
                     self._run_download_pertrack(job)
+                    if job.exit_code is None:
+                        job.exit_code = 0
+                elif job.type == "prepare" and job.cmd is None and job.list_text is not None:
+                    self._run_prepare_list_search(job)
                     if job.exit_code is None:
                         job.exit_code = 0
                 else:
@@ -320,6 +328,85 @@ class Runner:
             elif proc.returncode != 0:
                 job.log.append(f"[runner] 退出码 {proc.returncode}（台账已记录）")
         job._stop_tail.set()
+
+    def _run_prepare_list_search(self, job: Job) -> None:
+        """文本清单含无歌手行时，自动联网搜索多个版本候选并与目标曲库三层查重。"""
+        import cli as _cli
+        from flac_hunter.library import LibraryIndex, dedupe_track
+        from flac_hunter.upgrade import _netease_search
+
+        cfg = self.cfg
+        music = Path(job.music_dir or cfg.paths.music).expanduser()
+        out_path = Path(job.tracks_path or "")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_tracks = _cli._list_track_map(job.list_text or "")
+        expanded: list[dict] = []
+        for t in raw_tracks:
+            name = str(t.get("name") or "").strip()
+            artists = [str(a).strip() for a in (t.get("artists") or []) if str(a).strip()]
+            if artists or not name:
+                expanded.append(t)
+                continue
+            job.log.append(f"[prepare] 正在搜索「{name}」的多版本候选…")
+            cands = []
+            try:
+                cands = _netease_search(name, cfg=cfg) or []
+            except Exception as exc:
+                job.log.append(f"[prepare] 搜索失败（{exc}），保留原条目")
+            if not cands:
+                expanded.append(t)
+                continue
+            for item in cands[:8]:
+                sid = str(item.get("id") or "").strip()
+                if not sid:
+                    continue
+                raw_art = str(item.get("artists") or "")
+                art_list = [a.strip() for a in raw_art.split(",") if a.strip()]
+                dur_s = item.get("dur")
+                dur_ms = int(round(float(dur_s) * 1000)) if dur_s else None
+                expanded.append({
+                    "type": "netease",
+                    "uri": f"netease:{sid}",
+                    "name": str(item.get("name") or name),
+                    "artists": art_list,
+                    "album": None,
+                    "duration_ms": dur_ms,
+                    "image_url": None,
+                    "from_search": True,
+                })
+            job.log.append(f"[prepare] 「{name}」展开为 {min(len(cands), 8)} 个候选版本")
+
+        idx = LibraryIndex.scan(str(music), cfg=cfg) if music.is_dir() else LibraryIndex([])
+        records: list[dict] = []
+        for pos, t in enumerate(expanded, 1):
+            rec = {
+                "type": t.get("type") or "list",
+                "uri": t.get("uri"),
+                "name": str(t.get("name") or ""),
+                "artists": [str(a) for a in (t.get("artists") or [])],
+                "album": t.get("album"),
+                "position": pos,
+                "duration_ms": t.get("duration_ms"),
+                "image_url": t.get("image_url"),
+                "from_search": bool(t.get("from_search")),
+                "existing": False,
+                "existing_file": None,
+                "dedupe_reason": None,
+            }
+            res = dedupe_track(rec, idx, cfg=cfg)
+            entry, reason = (res[0], res[1]) if isinstance(res, tuple) else (None, None)
+            if isinstance(entry, dict):
+                entry = entry.get("path") or entry.get("file")
+            if reason in ("artist", "duration") and entry:
+                rec["existing"] = True
+                rec["existing_file"] = entry
+                rec["dedupe_reason"] = reason
+            elif reason == "same_title_other":
+                rec["dedupe_reason"] = "same_title_other"
+            records.append(rec)
+
+        out_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+        job.log.append(f"[prepare] tracks.json 写入 {len(records)} 条 -> {out_path}")
 
     def _run_audit(self, job: Job) -> None:
         """服务内直跑四项质量门：全量结构化结果，逐文件推进度。"""
@@ -742,7 +829,9 @@ class Handler(BaseHTTPRequestHandler):
                 slim = [{"position": r.get("position"), "name": r.get("name"),
                          "artists": r.get("artists"), "album": r.get("album"),
                          "duration_ms": r.get("duration_ms"),
-                         "existing": bool(r.get("existing")), "uri": r.get("uri")}
+                         "existing": bool(r.get("existing")),
+                         "from_search": bool(r.get("from_search")),
+                         "uri": r.get("uri")}
                         for r in records if isinstance(r, dict)]
                 self._json({"records": slim})
             except Exception as e:
@@ -766,9 +855,19 @@ class Handler(BaseHTTPRequestHandler):
                     cmd = [PY, "-X", "utf8", "cli.py", "prepare",
                            "--uri", str(body["uri"]), "--out", str(out)]
                 elif body.get("list_text"):
+                    import cli as _cli
+                    raw_text = str(body["list_text"])
                     out.parent.mkdir(parents=True, exist_ok=True)
                     lst = out.parent / "list.txt"
-                    lst.write_text(str(body["list_text"]), encoding="utf-8")
+                    lst.write_text(raw_text, encoding="utf-8")
+                    parsed_rows = _cli._list_track_map(raw_text)
+                    has_bare_title = any(not (row.get("artists") or []) for row in parsed_rows)
+                    if has_bare_title:
+                        norm_dir = str(Path(prep_dir).expanduser()) if prep_dir else ""
+                        job = r.submit("prepare", None, tracks_path=str(out),
+                                       music_dir=norm_dir, list_text=raw_text)
+                        self._json(job)
+                        return
                     cmd = [PY, "-X", "utf8", "cli.py", "prepare",
                            "--list", str(lst), "--out", str(out)]
                 else:

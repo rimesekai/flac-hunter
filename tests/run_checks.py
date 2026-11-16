@@ -1683,6 +1683,7 @@ def check_z13_cover_lyrics_and_upgrade_repair():
         assert len(cands) == 1 and len(cands[0]["members"]) == 2
         from flac_hunter.library import AUDIO_EXT
         assert ".mp3" in AUDIO_EXT and ".flac" in AUDIO_EXT
+        assert "from_search" in PAGE_HTML and hasattr(_gui.Runner, "_run_prepare_list_search")
     finally:
         shutil.rmtree(td, ignore_errors=True)
 

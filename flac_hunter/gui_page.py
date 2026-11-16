@@ -1543,7 +1543,7 @@ button, input, select, textarea {
           <textarea class="fc-textarea" id="listtext" aria-label="文本清单内容" placeholder="每行一首：歌名 - 歌手（也支持 歌名-歌手 或只写歌名；末尾可选加 | 时长秒）&#10;例：快晴 - Orangestar&#10;例：又三郎-ヨルシカ"></textarea>
           <div class="fc-row" style="margin-top:10px;">
             <button type="button" class="fc-btn fc-btn--primary" id="btn-list">按文本清单查重</button>
-            <span class="fc-hint" style="margin:0;">不访问网络，直接解析并与本地曲库对比去重。</span>
+            <span class="fc-hint" style="margin:0;">只填歌名时自动联网展开多个歌手/版本供选择；填「歌名 - 歌手」直接本地查重。</span>
           </div>
         </div>
 
@@ -2250,7 +2250,7 @@ function renderTracksTable() {
     if (kw && !`${r.name || ""} ${art}`.toLowerCase().includes(kw)) return;
     shown += 1;
     const rowKey = r.uri ? String(r.uri) : `pos:${r.position}`;
-    const isChecked = prevState.has(rowKey) ? prevState.get(rowKey) : !r.existing;
+    const isChecked = prevState.has(rowKey) ? prevState.get(rowKey) : (!r.existing && !r.from_search);
     const tr = document.createElement("tr");
     tr.innerHTML =
       `<td data-label="选择"><input type="checkbox" class="sel" data-key="${esc(rowKey)}" data-uri="${esc(r.uri || "")}" data-existing="${r.existing ? "1" : "0"}" ${isChecked ? "checked" : ""} aria-label="选择 ${esc(r.name)}"></td>` +
@@ -2275,6 +2275,9 @@ async function loadTracks(path) {
   $("#tracks-card").hidden = false;
   $("#tracks tbody").innerHTML = "";
   renderTracksTable();
+  if (loadedRecords.some((r) => r.from_search)) {
+    showToast(`已展开 ${loadedRecords.length} 个版本候选，请勾选需要的版本`, "ok");
+  }
 }
 
 $("#track-filter").oninput = renderTracksTable;
