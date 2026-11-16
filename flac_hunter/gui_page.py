@@ -2253,7 +2253,7 @@ function renderTracksTable() {
     const isChecked = prevState.has(rowKey) ? prevState.get(rowKey) : (!r.existing && !r.from_search);
     const tr = document.createElement("tr");
     tr.innerHTML =
-      `<td data-label="选择"><input type="checkbox" class="sel" data-key="${esc(rowKey)}" data-uri="${esc(r.uri || "")}" data-existing="${r.existing ? "1" : "0"}" ${isChecked ? "checked" : ""} aria-label="选择 ${esc(r.name)}"></td>` +
+      `<td data-label="选择"><input type="checkbox" class="sel" data-key="${esc(rowKey)}" data-uri="${esc(r.uri || "")}" data-existing="${r.existing ? "1" : "0"}" data-exfile="${esc(r.existing_file || "")}" data-title="${esc(r.name || "")}" ${isChecked ? "checked" : ""} aria-label="选择 ${esc(r.name)}"></td>` +
       `<td data-label="#" class="is-num">${esc(r.position)}</td>` +
       `<td data-label="歌名" title="${esc(r.name)}"><strong>${esc(r.name)}</strong></td>` +
       `<td data-label="歌手" title="${esc(art)}">${esc(art || "—")}</td>` +
@@ -2307,12 +2307,24 @@ $("#btn-dl").onclick = async () => {
   const checkedCbs = allCbs.filter((c) => c.checked);
   if (checkedCbs.length === 0) return showToast("请至少勾选一首曲目再下载", "err");
 
-  const hasSelectedExisting = checkedCbs.some((c) => c.dataset.existing === "1");
-  const isManualPick = checkedCbs.length < loadedRecords.length || loadedRecords.some((r) => r.from_search);
+  const existingCbs = checkedCbs.filter((c) => c.dataset.existing === "1");
+  let includeExisting = $("#inc-ex").checked;
+  if (!includeExisting && existingCbs.length > 0) {
+    const samples = existingCbs.slice(0, 3).map((c) => {
+      const t = c.dataset.title || c.dataset.key || "未知曲目";
+      const exf = c.dataset.exfile;
+      return exf ? `${t}（已有: ${exf}）` : t;
+    }).join("\n");
+    const more = existingCbs.length > 3 ? `\n…等共 ${existingCbs.length} 首` : "";
+    if (!confirm(`曲库中已有类似曲目，是否继续下载？\n\n${samples}${more}`)) {
+      return;
+    }
+    includeExisting = true;
+  }
   const body = {
     tracks: tracksPath,
     source: $("#source").value,
-    include_existing: $("#inc-ex").checked || (isManualPick && hasSelectedExisting),
+    include_existing: includeExisting,
     download_cover: $("#dl-cover") ? $("#dl-cover").checked : true,
     download_lyrics: $("#dl-lyrics") ? $("#dl-lyrics").checked : false,
   };

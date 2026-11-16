@@ -848,6 +848,7 @@ class Handler(BaseHTTPRequestHandler):
                          "artists": r.get("artists"), "album": r.get("album"),
                          "duration_ms": r.get("duration_ms"),
                          "existing": bool(r.get("existing")),
+                         "existing_file": Path(str(r.get("existing_file"))).name if r.get("existing_file") else "",
                          "from_search": bool(r.get("from_search")),
                          "uri": r.get("uri")}
                         for r in records if isinstance(r, dict)]
