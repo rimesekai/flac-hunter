@@ -16,6 +16,12 @@ try {
   if (s === "light" || s === "dark") {
     document.querySelector('meta[name="color-scheme"]').content = s;
   }
+  var qp = new URLSearchParams(location.search).get("lang");
+  var lng = (qp === "en" || qp === "zh") ? qp : localStorage.getItem("fh-lang");
+  if (lng === "en" || lng === "zh") {
+    document.documentElement.lang = lng === "en" ? "en" : "zh-CN";
+    document.documentElement.dataset.lang = lng;
+  }
 } catch (e) {}
 </script>
 <title>flac-hunter</title>
@@ -1338,7 +1344,7 @@ button, input, select, textarea {
 <div id="fc-shell" class="fc-shell">
   <aside class="fc-sidebar" aria-label="主导航">
     <div class="fc-sidebar__top">
-      <button id="btn-collapse" type="button" class="fc-icon-btn" aria-label="折叠侧边栏" title="折叠侧边栏">
+      <button id="btn-collapse" type="button" class="fc-icon-btn" aria-label="折叠侧边栏" title="折叠侧边栏" data-i18n-aria="sb.collapse" data-i18n-title="sb.collapse">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="3" y="4" width="18" height="16" rx="3"/><line x1="9" y1="4" x2="9" y2="20"/>
         </svg>
@@ -1359,31 +1365,31 @@ button, input, select, textarea {
           <rect x="3" y="3" width="8" height="8" rx="2.5"/><rect x="13" y="3" width="8" height="8" rx="4"/>
           <rect x="3" y="13" width="8" height="8" rx="2.5"/><rect x="13" y="13" width="8" height="8" rx="2.5"/>
         </svg>
-        <span>歌单导入</span>
+        <span data-i18n="nav.import">歌单导入</span>
       </button>
       <button type="button" class="fc-nav-item" data-tab="upgrade">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <polygon points="12 2 15 9 22 9 16.5 14 18.5 21 12 17 5.5 21 7.5 14 2 9 9 9 12 2"/>
         </svg>
-        <span>无损升级</span>
+        <span data-i18n="nav.upgrade">无损升级</span>
       </button>
       <button type="button" class="fc-nav-item" data-tab="audit">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
         </svg>
-        <span>质量审计</span>
+        <span data-i18n="nav.audit">质量审计</span>
       </button>
       <button type="button" class="fc-nav-item" data-tab="dedupe">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="3" y="4" width="13" height="13" rx="2"/><path d="M8 20h10a2 2 0 0 0 2-2V8"/>
         </svg>
-        <span>曲库查重</span>
+        <span data-i18n="nav.dedupe">曲库查重</span>
       </button>
       <button type="button" class="fc-nav-item" data-tab="jobs">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
         </svg>
-        <span>任务列表</span>
+        <span data-i18n="nav.jobs">任务列表</span>
         <span id="nav-jobs-badge" class="fc-nav-badge fc-tabular"></span>
       </button>
     </nav>
@@ -1392,7 +1398,7 @@ button, input, select, textarea {
       <div class="fc-lib-mini">
         <div class="fc-row" style="justify-content:space-between;gap:6px;">
           <span id="sb-lib-total" class="fc-tabular"><strong>0</strong> 首曲目</span>
-          <button type="button" id="btn-switch-lib" class="fc-btn fc-btn--sm fc-btn--tonal" style="padding:3px 9px;font-size:11px;">切换曲库</button>
+          <button type="button" id="btn-switch-lib" class="fc-btn fc-btn--sm fc-btn--tonal" style="padding:3px 9px;font-size:11px;" data-i18n="sb.switchLib">切换曲库</button>
         </div>
         <span id="sb-lib-sub" class="fc-tabular">FLAC 0 · MP3 0 · OGG 0</span>
         <span id="sb-lib-dir" class="fc-mono" style="font-size:11px;color:var(--fc-on-surface-variant);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
@@ -1404,7 +1410,7 @@ button, input, select, textarea {
             <circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/>
             <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>
           </svg>
-          <span>外观设置</span>
+          <span data-i18n="sb.appearance">外观设置</span>
         </button>
       </div>
     </div>
@@ -1417,8 +1423,9 @@ button, input, select, textarea {
         <span id="topbar-sub" class="fc-topbar__sub fc-tabular"></span>
       </div>
       <div class="fc-topbar__actions">
-        <span id="jobstat" class="fc-chip fc-tabular">空闲</span>
-        <button id="btn-quick-theme" type="button" class="fc-icon-btn fc-icon-btn--tonal" aria-label="切换浅色或深色主题" title="切换明暗主题">
+        <span id="jobstat" class="fc-chip fc-tabular" data-i18n="common.idle">空闲</span>
+        <button id="btn-lang" type="button" class="fc-btn fc-btn--sm fc-btn--tonal" aria-label="切换语言 / Switch Language" title="切换语言 / Switch Language" style="min-width:44px;font-weight:700;">EN</button>
+        <button id="btn-quick-theme" type="button" class="fc-icon-btn fc-icon-btn--tonal" aria-label="切换浅色或深色主题" title="切换明暗主题" data-i18n-aria="topbar.toggleTheme" data-i18n-title="topbar.toggleTheme">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="4"/>
             <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
@@ -1438,30 +1445,30 @@ button, input, select, textarea {
                 <svg class="fc-card-header__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
                 </svg>
-                <h2 class="fc-card-header__title">引擎状态</h2>
-                <span id="hero-chip" class="fc-chip fc-chip--ok"><span class="fc-chip__dot" aria-hidden="true"></span><span id="hero-chip-text">就绪</span></span>
+                <h2 class="fc-card-header__title" data-i18n="hero.title">引擎状态</h2>
+                <span id="hero-chip" class="fc-chip fc-chip--ok"><span class="fc-chip__dot" aria-hidden="true"></span><span id="hero-chip-text" data-i18n="hero.ready">就绪</span></span>
               </div>
             </div>
             <div>
-              <div id="hero-headline" class="fc-status-card__main">准备导入歌单或文本清单</div>
+              <div id="hero-headline" class="fc-status-card__main" data-i18n="hero.headlineIdle">准备导入歌单或文本清单</div>
               <div class="fc-row" style="margin-top:6px;gap:8px;">
                 <div id="hero-dir" class="fc-stat-sub fc-mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
-                <button type="button" id="btn-hero-switch-lib" class="fc-btn fc-btn--sm fc-btn--tonal" style="padding:2px 9px;font-size:11.5px;">切换默认曲库</button>
+                <button type="button" id="btn-hero-switch-lib" class="fc-btn fc-btn--sm fc-btn--tonal" style="padding:2px 9px;font-size:11.5px;" data-i18n="hero.switchDefaultLib">切换默认曲库</button>
               </div>
             </div>
             <div class="fc-status-card__meta">
               <div>
-                <div class="fc-meta-item__label">作业进度</div>
-                <div id="hero-progress" class="fc-meta-item__value fc-tabular">空闲</div>
+                <div class="fc-meta-item__label" data-i18n="hero.jobProgress">作业进度</div>
+                <div id="hero-progress" class="fc-meta-item__value fc-tabular" data-i18n="common.idle">空闲</div>
               </div>
               <div>
-                <div class="fc-meta-item__label">限速与锁</div>
-                <div class="fc-meta-item__value">单队列串行</div>
+                <div class="fc-meta-item__label" data-i18n="hero.rateAndLock">限速与锁</div>
+                <div class="fc-meta-item__value" data-i18n="hero.singleQueue">单队列串行</div>
               </div>
             </div>
           </div>
           <div class="fc-status-card__action">
-            <button id="hero-action-btn" type="button" class="fc-scallop-btn" aria-pressed="false" aria-label="快捷操作" title="聚焦导入 / 暂停或继续下载">
+            <button id="hero-action-btn" type="button" class="fc-scallop-btn" aria-pressed="false" aria-label="快捷操作" title="聚焦导入 / 暂停或继续下载" data-i18n-aria="hero.quickAction" data-i18n-title="hero.quickActionTitle">
               <svg class="fc-scallop-btn__shape" aria-hidden="true"><use href="#fc-shape-cookie12"></use></svg>
               <span id="hero-action-icon" class="fc-scallop-btn__icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
@@ -1476,7 +1483,7 @@ button, input, select, textarea {
               <svg class="fc-card-header__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/>
               </svg>
-              <h2 class="fc-card-header__title">本地曲库无损率</h2>
+              <h2 class="fc-card-header__title" data-i18n="stat.losslessRate">本地曲库无损率</h2>
             </div>
             <span id="stat-flac-pct" class="fc-chip fc-chip--primary fc-tabular">0%</span>
           </div>
@@ -1499,16 +1506,16 @@ button, input, select, textarea {
               <svg class="fc-card-header__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <path d="M9 11l3 3L22 4"/>
               </svg>
-              <h2 class="fc-card-header__title">最近质量审计</h2>
+              <h2 class="fc-card-header__title" data-i18n="stat.recentAudit">最近质量审计</h2>
             </div>
-            <button type="button" class="fc-btn fc-btn--sm" data-jump="audit">详情</button>
+            <button type="button" class="fc-btn fc-btn--sm" data-jump="audit" data-i18n="common.details">详情</button>
           </div>
           <div>
             <div class="fc-stat-figure">
               <span id="stat-audit-rate" class="fc-stat-num fc-tabular">—</span>
-              <span class="fc-stat-unit">通过率</span>
+              <span class="fc-stat-unit" data-i18n="stat.passRate">通过率</span>
             </div>
-            <div id="stat-audit-sub" class="fc-stat-sub fc-tabular">尚未加载审计记录</div>
+            <div id="stat-audit-sub" class="fc-stat-sub fc-tabular" data-i18n="stat.noAuditYet">尚未加载审计记录</div>
           </div>
           <div class="fc-wavy-meter" aria-hidden="true">
             <svg viewBox="0 0 220 12" preserveAspectRatio="none">
@@ -1522,62 +1529,62 @@ button, input, select, textarea {
       <article class="fc-card">
         <div class="fc-card-header">
           <div class="fc-card-header__start">
-            <h2 class="fc-card-header__title">1 · 导入歌单与查重</h2>
-            <span class="fc-card-header__sub">拉元数据后与本地曲库三层比对</span>
+            <h2 class="fc-card-header__title" data-i18n="imp.step1Title">1 · 导入歌单与查重</h2>
+            <span class="fc-card-header__sub" data-i18n="imp.step1Sub">拉元数据后与本地曲库三层比对</span>
           </div>
           <div class="fc-tablist" role="tablist" aria-label="导入方式">
-            <button type="button" class="fc-tab" id="imp-tab-uri" role="tab" aria-selected="true">歌单链接 / URI</button>
-            <button type="button" class="fc-tab" id="imp-tab-list" role="tab" aria-selected="false">文本清单 (--list)</button>
+            <button type="button" class="fc-tab" id="imp-tab-uri" role="tab" aria-selected="true" data-i18n="imp.tabUri">歌单链接 / URI</button>
+            <button type="button" class="fc-tab" id="imp-tab-list" role="tab" aria-selected="false" data-i18n="imp.tabList">文本清单 (--list)</button>
           </div>
         </div>
 
         <div id="imp-panel-uri" role="tabpanel" aria-labelledby="imp-tab-uri" class="fc-tabpanel-inner">
           <div class="fc-row">
-            <input type="text" class="fc-input" id="uri" aria-label="歌单链接或 URI" placeholder="粘贴歌单链接或 URI：B站收藏夹 / y.qq.com / 网易云 playlist / spotify: URI">
-            <button type="button" class="fc-btn fc-btn--primary" id="btn-uri">拉取并查重</button>
+            <input type="text" class="fc-input" id="uri" aria-label="歌单链接或 URI" placeholder="粘贴歌单链接或 URI：B站收藏夹 / y.qq.com / 网易云 playlist / spotify: URI" data-i18n-ph="imp.uriPh">
+            <button type="button" class="fc-btn fc-btn--primary" id="btn-uri" data-i18n="imp.btnUri">拉取并查重</button>
           </div>
-          <div class="fc-hint">支持 bilibili.com 收藏夹、y.qq.com 歌单、网易云公开 playlist、spotify: URI。若为私密歌单，可切换「文本清单」。</div>
+          <div class="fc-hint" data-i18n="imp.uriHint">支持 bilibili.com 收藏夹、y.qq.com 歌单、网易云公开 playlist、spotify: URI。若为私密歌单，可切换「文本清单」。</div>
         </div>
 
         <div id="imp-panel-list" role="tabpanel" aria-labelledby="imp-tab-list" class="fc-tabpanel-inner" hidden>
-          <textarea class="fc-textarea" id="listtext" aria-label="文本清单内容" placeholder="每行一首：歌名 - 歌手（也支持 歌名-歌手 或只写歌名；末尾可选加 | 时长秒）&#10;例：快晴 - Orangestar&#10;例：又三郎-ヨルシカ"></textarea>
+          <textarea class="fc-textarea" id="listtext" aria-label="文本清单内容" placeholder="每行一首：歌名 - 歌手（也支持 歌名-歌手 或只写歌名；末尾可选加 | 时长秒）&#10;例：快晴 - Orangestar&#10;例：又三郎-ヨルシカ" data-i18n-ph="imp.listPh"></textarea>
           <div class="fc-row" style="margin-top:10px;">
-            <button type="button" class="fc-btn fc-btn--primary" id="btn-list">按文本清单查重</button>
-            <span class="fc-hint" style="margin:0;">只填歌名时自动联网展开多个歌手/版本供选择；填「歌名 - 歌手」直接本地查重。</span>
+            <button type="button" class="fc-btn fc-btn--primary" id="btn-list" data-i18n="imp.btnList">按文本清单查重</button>
+            <span class="fc-hint" style="margin:0;" data-i18n="imp.listHint">只填歌名时自动联网展开多个歌手/版本供选择；填「歌名 - 歌手」直接本地查重。</span>
           </div>
         </div>
 
         <div class="fc-block" style="margin-top:14px;">
           <div class="fc-row" style="gap:8px;">
-            <label class="fc-switch-label" for="dl-dir" style="font-weight:600;color:var(--fc-on-surface);">本次下载保存到</label>
-            <input type="text" id="dl-dir" class="fc-input" style="flex:1;min-width:200px;" placeholder="留空则保存到默认曲库">
-            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-pick-dir">选择文件夹</button>
-            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-reset-dir">恢复默认</button>
+            <label class="fc-switch-label" for="dl-dir" style="font-weight:600;color:var(--fc-on-surface);" data-i18n="imp.saveTo">本次下载保存到</label>
+            <input type="text" id="dl-dir" class="fc-input" style="flex:1;min-width:200px;" placeholder="留空则保存到默认曲库" data-i18n-ph="imp.dlDirPh">
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-pick-dir" data-i18n="common.pickFolder">选择文件夹</button>
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-reset-dir" data-i18n="common.resetDefault">恢复默认</button>
           </div>
-          <div class="fc-hint" style="margin-top:6px;">支持手动输入/粘贴路径或点击「选择文件夹」；留空则沿用默认曲库目录。</div>
+          <div class="fc-hint" style="margin-top:6px;" data-i18n="imp.saveToHint">支持手动输入/粘贴路径或点击「选择文件夹」；留空则沿用默认曲库目录。</div>
         </div>
       </article>
 
       <article class="fc-card" id="tracks-card" hidden>
         <div class="fc-card-header">
           <div class="fc-card-header__start">
-            <h2 class="fc-card-header__title">2 · 勾选要下载的曲目</h2>
+            <h2 class="fc-card-header__title" data-i18n="imp.step2Title">2 · 勾选要下载的曲目</h2>
             <span id="track-summary" class="fc-chip fc-tabular"></span>
           </div>
           <label class="fc-search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="search" id="track-filter" placeholder="过滤歌名或歌手…">
+            <input type="search" id="track-filter" placeholder="过滤歌名或歌手…" data-i18n-ph="imp.filterPh">
           </label>
         </div>
 
         <div class="fc-row" style="margin-bottom:12px;">
-          <button type="button" class="fc-btn fc-btn--sm" id="btn-selnew">只选新曲</button>
-          <button type="button" class="fc-btn fc-btn--sm" id="btn-selall">全选</button>
-          <button type="button" class="fc-btn fc-btn--sm" id="btn-selnone">全不选</button>
+          <button type="button" class="fc-btn fc-btn--sm" id="btn-selnew" data-i18n="imp.selNew">只选新曲</button>
+          <button type="button" class="fc-btn fc-btn--sm" id="btn-selall" data-i18n="common.selAll">全选</button>
+          <button type="button" class="fc-btn fc-btn--sm" id="btn-selnone" data-i18n="common.selNone">全不选</button>
           <span class="fc-spacer"></span>
-          <label class="fc-switch-label" for="source">下载源
+          <label class="fc-switch-label" for="source"><span data-i18n="imp.source">下载源</span>
             <select id="source" class="fc-select">
-              <option value="auto">auto（无损优先）</option>
+              <option value="auto" data-i18n="imp.srcAuto">auto（无损优先）</option>
               <option value="gdstudio">gdstudio</option>
               <option value="netease">netease</option>
               <option value="musicdl">musicdl</option>
@@ -1587,30 +1594,30 @@ button, input, select, textarea {
           </label>
           <label class="fc-switch-label">
             <input type="checkbox" id="dl-cover" class="fc-switch" checked>
-            <span>下载封面</span>
+            <span data-i18n="imp.dlCover">下载封面</span>
           </label>
           <label class="fc-switch-label">
             <input type="checkbox" id="dl-lyrics" class="fc-switch">
-            <span>下载歌词</span>
+            <span data-i18n="imp.dlLyrics">下载歌词</span>
           </label>
           <label class="fc-switch-label">
             <input type="checkbox" id="inc-ex" class="fc-switch">
-            <span>含已有曲目重下</span>
+            <span data-i18n="imp.incEx">含已有曲目重下</span>
           </label>
-          <button type="button" class="fc-btn fc-btn--primary" id="btn-dl">开始下载 (<span id="sel-count" class="fc-tabular">0</span>)</button>
+          <button type="button" class="fc-btn fc-btn--primary" id="btn-dl"><span data-i18n="imp.btnDl">开始下载</span> (<span id="sel-count" class="fc-tabular">0</span>)</button>
         </div>
 
         <div class="fc-table-wrap" tabindex="0" role="region" aria-label="歌单曲目查重列表">
           <table id="tracks" class="fc-table fc-table--responsive">
-            <caption>导入的歌单曲目及本地去重状态</caption>
+            <caption data-i18n="imp.tableCap">导入的歌单曲目及本地去重状态</caption>
             <thead>
               <tr>
                 <th style="width:40px;"><input type="checkbox" id="chk-head" aria-label="切换全部勾选"></th>
                 <th style="width:46px;" class="is-num">#</th>
-                <th>歌名</th>
-                <th>歌手</th>
-                <th style="width:76px;" class="is-num">时长</th>
-                <th style="width:92px;">状态</th>
+                <th data-i18n="imp.colTitle">歌名</th>
+                <th data-i18n="imp.colArtist">歌手</th>
+                <th style="width:76px;" class="is-num" data-i18n="imp.colDur">时长</th>
+                <th style="width:92px;" data-i18n="imp.colStatus">状态</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -1624,23 +1631,23 @@ button, input, select, textarea {
       <article class="fc-card">
         <div class="fc-card-header">
           <div class="fc-card-header__start">
-            <h2 class="fc-card-header__title">任务列表</h2>
-            <span class="fc-card-header__sub">同一时间仅执行一个作业，共享限速与曲库锁</span>
+            <h2 class="fc-card-header__title" data-i18n="jobs.title">任务列表</h2>
+            <span class="fc-card-header__sub" data-i18n="jobs.sub">同一时间仅执行一个作业，共享限速与曲库锁</span>
           </div>
         </div>
-        <div id="joblist" class="fc-job-list"><div class="fc-empty">还没有任务 —— 前往「歌单导入」发起查重与下载</div></div>
+        <div id="joblist" class="fc-job-list"><div class="fc-empty" data-i18n="jobs.empty">还没有任务 —— 前往「歌单导入」发起查重与下载</div></div>
       </article>
 
       <article class="fc-card" id="joblog-card" hidden>
         <div class="fc-card-header">
           <div class="fc-card-header__start">
-            <h2 id="joblog-title" class="fc-card-header__title">作业日志</h2>
+            <h2 id="joblog-title" class="fc-card-header__title" data-i18n="jobs.logTitle">作业日志</h2>
             <span id="dlpct" class="fc-chip fc-chip--primary fc-tabular"></span>
           </div>
           <div class="fc-row" style="gap:6px;">
-            <button type="button" class="fc-btn fc-btn--sm" id="btn-copy-log">复制日志</button>
+            <button type="button" class="fc-btn fc-btn--sm" id="btn-copy-log" data-i18n="jobs.copyLog">复制日志</button>
             <button type="button" class="fc-btn fc-btn--sm" id="btn-pause" hidden>⏸ 暂停</button>
-            <button type="button" class="fc-btn fc-btn--sm fc-btn--danger" id="btn-skip" hidden>⏭ 跳过这首</button>
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--danger" id="btn-skip" hidden data-i18n="jobs.skipTrack">⏭ 跳过这首</button>
           </div>
         </div>
         <div class="fc-segmented-bar" id="dlbar-wrap" style="margin-bottom:10px;">
@@ -1657,27 +1664,27 @@ button, input, select, textarea {
       <article class="fc-card" id="up-queue-card">
         <div class="fc-card-header">
           <div class="fc-card-header__start">
-            <h2 class="fc-card-header__title">1 · 待升级清单</h2>
+            <h2 class="fc-card-header__title" data-i18n="up.step1Title">1 · 待升级清单</h2>
             <span id="up-queue-count" class="fc-chip fc-chip--primary fc-tabular">0 个文件</span>
           </div>
           <div class="fc-row" style="gap:6px;">
-            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-up-selall">全选</button>
-            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-up-selnone">全不选</button>
-            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-up-clear-files">清空清单</button>
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-up-selall" data-i18n="common.selAll">全选</button>
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-up-selnone" data-i18n="common.selNone">全不选</button>
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-up-clear-files" data-i18n="up.clearList">清空清单</button>
           </div>
         </div>
 
         <div class="fc-block" style="margin-bottom:12px;">
           <div class="fc-row" style="gap:8px;margin-bottom:10px;">
-            <label class="fc-switch-label" for="up-dir" style="font-weight:600;color:var(--fc-on-surface);">扫描目录</label>
-            <input type="text" id="up-dir" class="fc-input" style="flex:1;min-width:200px;" placeholder="留空则扫描默认曲库">
-            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-up-pick-dir">选择文件夹</button>
+            <label class="fc-switch-label" for="up-dir" style="font-weight:600;color:var(--fc-on-surface);" data-i18n="up.scanDir">扫描目录</label>
+            <input type="text" id="up-dir" class="fc-input" style="flex:1;min-width:200px;" placeholder="留空则扫描默认曲库" data-i18n-ph="common.scanDirPh">
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-up-pick-dir" data-i18n="common.pickFolder">选择文件夹</button>
           </div>
           <div class="fc-row" style="gap:8px;justify-content:space-between;">
             <div class="fc-segmented" id="up-ext-seg" role="group" aria-label="扫描格式">
               <button type="button" class="fc-segmented__btn" data-ext="all" aria-pressed="true">MP3 + OGG</button>
-              <button type="button" class="fc-segmented__btn" data-ext="mp3" aria-pressed="false">仅 MP3</button>
-              <button type="button" class="fc-segmented__btn" data-ext="ogg" aria-pressed="false">仅 OGG</button>
+              <button type="button" class="fc-segmented__btn" data-ext="mp3" aria-pressed="false" data-i18n="up.onlyMp3">仅 MP3</button>
+              <button type="button" class="fc-segmented__btn" data-ext="ogg" aria-pressed="false" data-i18n="up.onlyOgg">仅 OGG</button>
               <button type="button" class="fc-segmented__btn" data-ext="flac" aria-pressed="false">FLAC</button>
             </div>
             <select id="up-ext" class="fc-sr-only" aria-hidden="true" tabindex="-1">
@@ -1687,30 +1694,30 @@ button, input, select, textarea {
               <option value="flac">flac</option>
             </select>
             <div class="fc-row" style="gap:8px;">
-              <input type="search" id="up-queue-filter" class="fc-input" style="max-width:200px;padding:6px 10px;" placeholder="过滤清单文件名…">
-              <button type="button" class="fc-btn fc-btn--sm fc-btn--primary" id="btn-up-scan">扫描载入清单</button>
+              <input type="search" id="up-queue-filter" class="fc-input" style="max-width:200px;padding:6px 10px;" placeholder="过滤清单文件名…" data-i18n-ph="up.filterPh">
+              <button type="button" class="fc-btn fc-btn--sm fc-btn--primary" id="btn-up-scan" data-i18n="up.btnScan">扫描载入清单</button>
             </div>
           </div>
         </div>
 
         <div id="up-queue-list" class="fc-dir-list" style="max-height:260px;">
-          <div class="fc-empty">待升级清单为空 —— 请在上方选择目录「扫描载入清单」，或从「质量审计」传入不合格文件</div>
+          <div class="fc-empty" data-i18n="up.empty">待升级清单为空 —— 请在上方选择目录「扫描载入清单」，或从「质量审计」传入不合格文件</div>
         </div>
       </article>
 
       <article class="fc-card">
         <div class="fc-card-header">
           <div class="fc-card-header__start">
-            <h2 class="fc-card-header__title">2 · 升级执行</h2>
-            <span class="fc-card-header__sub">MP3/OGG 或假无损重拉真 FLAC；已是真 FLAC 仅就地补封面与标签（免重下）</span>
+            <h2 class="fc-card-header__title" data-i18n="up.step2Title">2 · 升级执行</h2>
+            <span class="fc-card-header__sub" data-i18n="up.step2Sub">MP3/OGG 或假无损重拉真 FLAC；已是真 FLAC 仅就地补封面与标签（免重下）</span>
           </div>
         </div>
 
         <div class="fc-block" style="margin-bottom:14px;">
           <div class="fc-row" style="justify-content:space-between;">
             <div>
-              <div style="font-weight:600;">清空跳名单全量重试</div>
-              <div class="fc-stat-sub">连续失败 ≥ 2 次的曲目默认记入跳名单；开启后会重置记录重新尝试</div>
+              <div style="font-weight:600;" data-i18n="up.retryTitle">清空跳名单全量重试</div>
+              <div class="fc-stat-sub" data-i18n="up.retrySub">连续失败 ≥ 2 次的曲目默认记入跳名单；开启后会重置记录重新尝试</div>
             </div>
             <label class="fc-switch-label">
               <input type="checkbox" id="up-retry" class="fc-switch" aria-label="清空跳名单全量重试">
@@ -1719,8 +1726,8 @@ button, input, select, textarea {
         </div>
 
         <div class="fc-row">
-          <button type="button" class="fc-btn fc-btn--primary" id="btn-up">开始无损升级 (<span id="up-sel-count" class="fc-tabular">0</span>)</button>
-          <span class="fc-hint" style="margin:0;">替换前自动备份旧文件并对比 PCM 指纹留证。</span>
+          <button type="button" class="fc-btn fc-btn--primary" id="btn-up"><span data-i18n="up.btnStart">开始无损升级</span> (<span id="up-sel-count" class="fc-tabular">0</span>)</button>
+          <span class="fc-hint" style="margin:0;" data-i18n="up.hint">替换前自动备份旧文件并对比 PCM 指纹留证。</span>
         </div>
       </article>
     </section>
@@ -1730,32 +1737,32 @@ button, input, select, textarea {
       <article class="fc-card">
         <div class="fc-card-header">
           <div class="fc-card-header__start">
-            <h2 class="fc-card-header__title">四项质量门审计</h2>
-            <span class="fc-card-header__sub">实测 ffprobe：时长偏差 / 缺标签 / 缺封面 / 伪 FLAC</span>
+            <h2 class="fc-card-header__title" data-i18n="aud.title">四项质量门审计</h2>
+            <span class="fc-card-header__sub" data-i18n="aud.sub">实测 ffprobe：时长偏差 / 缺标签 / 缺封面 / 伪 FLAC</span>
           </div>
           <div class="fc-row" style="gap:8px;">
-            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-aud-load-files">选定文件列表</button>
-            <button type="button" class="fc-btn fc-btn--primary" id="btn-audit">开始审计</button>
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-aud-load-files" data-i18n="aud.pickFiles">选定文件列表</button>
+            <button type="button" class="fc-btn fc-btn--primary" id="btn-audit" data-i18n="aud.btnStart">开始审计</button>
           </div>
         </div>
         <div class="fc-block" style="margin-bottom:10px;">
           <div class="fc-row" style="gap:8px;">
-            <label class="fc-switch-label" for="aud-dir" style="font-weight:600;color:var(--fc-on-surface);">审计目录</label>
-            <input type="text" id="aud-dir" class="fc-input" style="flex:1;min-width:200px;" placeholder="留空则扫描默认曲库">
-            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-aud-pick-dir">选择文件夹</button>
+            <label class="fc-switch-label" for="aud-dir" style="font-weight:600;color:var(--fc-on-surface);" data-i18n="aud.dirLabel">审计目录</label>
+            <input type="text" id="aud-dir" class="fc-input" style="flex:1;min-width:200px;" placeholder="留空则扫描默认曲库" data-i18n-ph="common.scanDirPh">
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-aud-pick-dir" data-i18n="common.pickFolder">选择文件夹</button>
           </div>
         </div>
         <div id="aud-pick-box" class="fc-block" style="margin-bottom:10px;" hidden>
           <div class="fc-row" style="gap:8px;margin-bottom:8px;">
             <span id="aud-pick-summary" class="fc-chip fc-tabular">已选 0 个文件</span>
-            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-aud-pick-all">全选</button>
-            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-aud-pick-none">清空</button>
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-aud-pick-all" data-i18n="common.selAll">全选</button>
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-aud-pick-none" data-i18n="common.clear">清空</button>
             <span class="fc-spacer"></span>
-            <input type="search" id="aud-pick-filter" class="fc-input" style="max-width:220px;padding:6px 10px;" placeholder="过滤待审文件名…">
+            <input type="search" id="aud-pick-filter" class="fc-input" style="max-width:220px;padding:6px 10px;" placeholder="过滤待审文件名…" data-i18n-ph="aud.pickFilterPh">
           </div>
           <div id="aud-pick-list" class="fc-dir-list" style="max-height:200px;"></div>
         </div>
-        <div id="audit-empty-hint" class="fc-hint" style="margin-top:0;">不选定具体文件时将扫描目录内全部 .flac；若有历史审计记录将自动回显在下方。</div>
+        <div id="audit-empty-hint" class="fc-hint" style="margin-top:0;" data-i18n="aud.emptyHint">不选定具体文件时将扫描目录内全部 .flac；若有历史审计记录将自动回显在下方。</div>
       </article>
 
       <div id="audit-result" hidden>
@@ -1764,13 +1771,13 @@ button, input, select, textarea {
         <article class="fc-card">
           <div class="fc-card-header">
             <div class="fc-card-header__start">
-              <h2 class="fc-card-header__title">不合格文件明细</h2>
+              <h2 class="fc-card-header__title" data-i18n="aud.detailTitle">不合格文件明细</h2>
               <span id="audit-when" class="fc-chip fc-tabular"></span>
             </div>
             <div class="fc-row" style="gap:8px;">
               <span id="audit-count" class="fc-stat-sub fc-tabular"></span>
-              <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-aud-send-sel">选中传入升级 (<span id="aud-sel-count" class="fc-tabular">0</span>)</button>
-              <button type="button" class="fc-btn fc-btn--sm fc-btn--primary" id="btn-aud-send-all">全部不合格传入升级</button>
+              <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-aud-send-sel"><span data-i18n="aud.sendSel">选中传入升级</span> (<span id="aud-sel-count" class="fc-tabular">0</span>)</button>
+              <button type="button" class="fc-btn fc-btn--sm fc-btn--primary" id="btn-aud-send-all" data-i18n="aud.sendAll">全部不合格传入升级</button>
             </div>
           </div>
 
@@ -1778,14 +1785,14 @@ button, input, select, textarea {
             <div id="audit-chips" class="fc-tablist" role="tablist" aria-label="按问题分类筛选"></div>
             <label class="fc-search">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-              <input type="search" id="audit-search" placeholder="按文件名搜索…">
+              <input type="search" id="audit-search" placeholder="按文件名搜索…" data-i18n-ph="aud.searchPh">
             </label>
           </div>
 
           <div class="fc-table-wrap" tabindex="0" role="region" aria-label="质量审计异常文件列表">
             <table id="audit-files" class="fc-table fc-table--responsive">
-              <caption>未通过四项质量门的 FLAC 文件列表</caption>
-              <thead><tr><th style="width:40px;"><input type="checkbox" id="aud-chk-head" aria-label="全选当前不合格文件"></th><th>文件名</th><th style="width:240px;">触发问题</th></tr></thead>
+              <caption data-i18n="aud.tableCap">未通过四项质量门的 FLAC 文件列表</caption>
+              <thead><tr><th style="width:40px;"><input type="checkbox" id="aud-chk-head" aria-label="全选当前不合格文件"></th><th data-i18n="aud.colFile">文件名</th><th style="width:240px;" data-i18n="aud.colIssues">触发问题</th></tr></thead>
               <tbody></tbody>
             </table>
           </div>
@@ -1797,23 +1804,23 @@ button, input, select, textarea {
       <article class="fc-card" style="margin-bottom:16px;">
         <div class="fc-card-header">
           <div class="fc-card-header__start">
-            <h2 class="fc-card-header__title">1 · 曲库查重扫描</h2>
-            <span class="fc-card-header__sub">按歌名、艺人别名与时长（±3s）聚类疑似重复文件，绝不自动删除，全权由你确认处理</span>
+            <h2 class="fc-card-header__title" data-i18n="ded.step1Title">1 · 曲库查重扫描</h2>
+            <span class="fc-card-header__sub" data-i18n="ded.step1Sub">按歌名、艺人别名与时长（±3s）聚类疑似重复文件，绝不自动删除，全权由你确认处理</span>
           </div>
-          <span id="ded-summary" class="fc-chip fc-tabular">未扫描</span>
+          <span id="ded-summary" class="fc-chip fc-tabular" data-i18n="ded.notScanned">未扫描</span>
         </div>
         <div class="fc-block" style="margin-bottom:12px;">
           <div class="fc-row" style="gap:8px;flex-wrap:wrap;align-items:center;">
-            <label class="fc-switch-label" for="ded-dir" style="font-weight:600;color:var(--fc-on-surface);">查重目录</label>
-            <input type="text" id="ded-dir" class="fc-input" style="flex:1;min-width:200px;" placeholder="留空则扫描当前默认曲库">
-            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-pick-ded-dir">选择文件夹</button>
+            <label class="fc-switch-label" for="ded-dir" style="font-weight:600;color:var(--fc-on-surface);" data-i18n="ded.dirLabel">查重目录</label>
+            <input type="text" id="ded-dir" class="fc-input" style="flex:1;min-width:200px;" placeholder="留空则扫描当前默认曲库" data-i18n-ph="common.scanDirPh">
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="btn-pick-ded-dir" data-i18n="common.pickFolder">选择文件夹</button>
           </div>
         </div>
         <div class="fc-row" style="gap:10px;flex-wrap:wrap;">
-          <button type="button" class="fc-btn fc-btn--primary" id="btn-ded-scan">开始扫描查重</button>
+          <button type="button" class="fc-btn fc-btn--primary" id="btn-ded-scan" data-i18n="ded.btnScan">开始扫描查重</button>
           <label class="fc-search" style="flex:1;min-width:180px;">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="search" id="ded-filter" placeholder="过滤歌名、艺人或文件名…">
+            <input type="search" id="ded-filter" placeholder="过滤歌名、艺人或文件名…" data-i18n-ph="ded.filterPh">
           </label>
         </div>
       </article>
@@ -1821,17 +1828,17 @@ button, input, select, textarea {
       <article class="fc-card">
         <div class="fc-card-header">
           <div class="fc-card-header__start">
-            <h2 class="fc-card-header__title">2 · 疑似重复分组</h2>
-            <span class="fc-card-header__sub">请勾选确认要清理的冗余副本；操作会移入 staging/dedupe_trash 回收站</span>
+            <h2 class="fc-card-header__title" data-i18n="ded.step2Title">2 · 疑似重复分组</h2>
+            <span class="fc-card-header__sub" data-i18n="ded.step2Sub">请勾选确认要清理的冗余副本；操作会移入 staging/dedupe_trash 回收站</span>
           </div>
           <div class="fc-row" style="gap:6px;flex-wrap:wrap;">
-            <button type="button" class="fc-btn fc-btn--sm" id="btn-ded-auto">保留最优（勾选其余）</button>
-            <button type="button" class="fc-btn fc-btn--sm" id="btn-ded-none">清空勾选</button>
-            <button type="button" class="fc-btn fc-btn--sm fc-btn--danger" id="btn-ded-del">移入回收站 (<span id="ded-sel-count" class="fc-tabular">0</span>)</button>
+            <button type="button" class="fc-btn fc-btn--sm" id="btn-ded-auto" data-i18n="ded.keepBest">保留最优（勾选其余）</button>
+            <button type="button" class="fc-btn fc-btn--sm" id="btn-ded-none" data-i18n="ded.clearSel">清空勾选</button>
+            <button type="button" class="fc-btn fc-btn--sm fc-btn--danger" id="btn-ded-del"><span data-i18n="ded.moveTrash">移入回收站</span> (<span id="ded-sel-count" class="fc-tabular">0</span>)</button>
           </div>
         </div>
         <div id="ded-groups" class="fc-dir-list" style="max-height:520px;">
-          <div class="fc-empty">点击上方「开始扫描查重」列出曲库中可能重复的曲目分组</div>
+          <div class="fc-empty" data-i18n="ded.empty">点击上方「开始扫描查重」列出曲库中可能重复的曲目分组</div>
         </div>
       </article>
     </section>
@@ -1841,61 +1848,66 @@ button, input, select, textarea {
 <nav class="fc-dock" aria-label="移动端快捷导航">
   <button type="button" class="fc-dock__item" data-tab="import" aria-current="page">
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="4"/><rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></svg>
-    <span>导入</span>
+    <span data-i18n="dock.import">导入</span>
   </button>
   <button type="button" class="fc-dock__item" data-tab="upgrade">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="12 2 15 9 22 9 16.5 14 18.5 21 12 17 5.5 21 7.5 14 2 9 9 9 12 2"/></svg>
-    <span>升级</span>
+    <span data-i18n="dock.upgrade">升级</span>
   </button>
   <button type="button" class="fc-dock__item" data-tab="audit">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-    <span>审计</span>
+    <span data-i18n="dock.audit">审计</span>
   </button>
   <button type="button" class="fc-dock__item" data-tab="dedupe">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="13" height="13" rx="2"/><path d="M8 20h10a2 2 0 0 0 2-2V8"/></svg>
-    <span>查重</span>
+    <span data-i18n="dock.dedupe">查重</span>
   </button>
   <button type="button" class="fc-dock__item" data-tab="jobs">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-    <span>任务</span>
+    <span data-i18n="dock.jobs">任务</span>
   </button>
 </nav>
 
 <div id="theme-popover" popover="auto" class="fc-popover" aria-label="外观与主题设置">
-  <div style="font-weight:700;font-size:14px;margin-bottom:12px;">外观与主题引擎</div>
-  <div style="font-size:12px;color:var(--fc-on-surface-variant);margin-bottom:6px;">主题模式</div>
+  <div style="font-weight:700;font-size:14px;margin-bottom:12px;" data-i18n="theme.title">外观与主题引擎</div>
+  <div style="font-size:12px;color:var(--fc-on-surface-variant);margin-bottom:6px;" data-i18n="theme.lang">界面语言</div>
   <div class="fc-segmented" style="margin-bottom:14px;width:100%;">
-    <button type="button" class="fc-segmented__btn" style="flex:1;" data-scheme="light dark" aria-pressed="true">跟随系统</button>
-    <button type="button" class="fc-segmented__btn" style="flex:1;" data-scheme="light" aria-pressed="false">浅色</button>
-    <button type="button" class="fc-segmented__btn" style="flex:1;" data-scheme="dark" aria-pressed="false">深色</button>
+    <button type="button" class="fc-segmented__btn" style="flex:1;" data-lang="zh" aria-pressed="true">中文</button>
+    <button type="button" class="fc-segmented__btn" style="flex:1;" data-lang="en" aria-pressed="false">English</button>
   </div>
-  <div style="font-size:12px;color:var(--fc-on-surface-variant);margin-bottom:6px;">种子主题色</div>
+  <div style="font-size:12px;color:var(--fc-on-surface-variant);margin-bottom:6px;" data-i18n="theme.mode">主题模式</div>
+  <div class="fc-segmented" style="margin-bottom:14px;width:100%;">
+    <button type="button" class="fc-segmented__btn" style="flex:1;" data-scheme="light dark" aria-pressed="true" data-i18n="theme.auto">跟随系统</button>
+    <button type="button" class="fc-segmented__btn" style="flex:1;" data-scheme="light" aria-pressed="false" data-i18n="theme.light">浅色</button>
+    <button type="button" class="fc-segmented__btn" style="flex:1;" data-scheme="dark" aria-pressed="false" data-i18n="theme.dark">深色</button>
+  </div>
+  <div style="font-size:12px;color:var(--fc-on-surface-variant);margin-bottom:6px;" data-i18n="theme.seed">种子主题色</div>
   <div id="seed-swatches" class="fc-swatch-row" style="margin-bottom:14px;"></div>
   <div class="fc-row" style="justify-content:space-between;margin-bottom:8px;">
-    <span style="font-size:13px;">纯黑深色 (OLED)</span>
+    <span style="font-size:13px;" data-i18n="theme.pureBlack">纯黑深色 (OLED)</span>
     <input type="checkbox" id="pref-pure-black" class="fc-switch" aria-label="纯黑深色模式">
   </div>
   <div class="fc-row" style="justify-content:space-between;">
-    <span style="font-size:13px;">Liquid Glass 浮层</span>
+    <span style="font-size:13px;" data-i18n="theme.glass">Liquid Glass 浮层</span>
     <input type="checkbox" id="pref-glass" class="fc-switch" aria-label="Liquid Glass 液态毛玻璃" checked>
   </div>
 </div>
 
 <dialog id="dir-dialog" class="fc-dialog" aria-labelledby="dir-dialog-title">
   <div class="fc-card-header" style="margin-bottom:10px;">
-    <h3 id="dir-dialog-title" class="fc-card-header__title" style="font-size:15px;color:var(--fc-on-surface);">选择下载保存目录</h3>
-    <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="dir-close">关闭</button>
+    <h3 id="dir-dialog-title" class="fc-card-header__title" style="font-size:15px;color:var(--fc-on-surface);" data-i18n="dir.title">选择下载保存目录</h3>
+    <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="dir-close" data-i18n="common.close">关闭</button>
   </div>
   <div id="dir-drives" class="fc-row" style="gap:6px;margin-bottom:8px;flex-wrap:wrap;"></div>
   <div class="fc-row" style="gap:8px;margin-bottom:10px;">
-    <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="dir-up">上一级</button>
+    <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="dir-up" data-i18n="dir.up">上一级</button>
     <input type="text" id="dir-current" class="fc-input" style="flex:1;padding:7px 10px;" aria-label="当前目录路径">
-    <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="dir-go">跳转</button>
+    <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="dir-go" data-i18n="dir.go">跳转</button>
   </div>
   <div id="dir-list" class="fc-dir-list" role="listbox" aria-label="子文件夹列表"></div>
   <div class="fc-row" style="justify-content:flex-end;gap:8px;margin-top:12px;">
-    <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="dir-cancel">取消</button>
-    <button type="button" class="fc-btn fc-btn--primary" id="dir-choose">选择此目录</button>
+    <button type="button" class="fc-btn fc-btn--sm fc-btn--tonal" id="dir-cancel" data-i18n="common.cancel">取消</button>
+    <button type="button" class="fc-btn fc-btn--primary" id="dir-choose" data-i18n="dir.choose">选择此目录</button>
   </div>
 </dialog>
 
@@ -1905,8 +1917,542 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => (s ?? "").toString().replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-const TYPE_NAME = { prepare: "歌单查重", download: "下载", upgrade: "无损升级", audit: "质量审计", custom: "自定义" };
-const VIEW_TITLE = { import: "歌单导入", jobs: "任务列表", upgrade: "无损升级", audit: "质量审计", dedupe: "曲库查重" };
+const LANG_KEY = "fh-lang";
+const I18N = {
+  zh: {
+    "nav.import": "歌单导入",
+    "nav.upgrade": "无损升级",
+    "nav.audit": "质量审计",
+    "nav.dedupe": "曲库查重",
+    "nav.jobs": "任务列表",
+    "dock.import": "导入",
+    "dock.upgrade": "升级",
+    "dock.audit": "审计",
+    "dock.dedupe": "查重",
+    "dock.jobs": "任务",
+    "sb.collapse": "折叠侧边栏",
+    "sb.switchLib": "切换曲库",
+    "sb.appearance": "外观设置",
+    "sb.tracksCount": "<strong>{n}</strong> 首曲目",
+    "topbar.toggleTheme": "切换浅色或深色主题",
+    "topbar.sub": "曲库 {total} 首 · FLAC {flac} ({pct}%)",
+    "common.idle": "空闲",
+    "common.details": "详情",
+    "common.pickFolder": "选择文件夹",
+    "common.resetDefault": "恢复默认",
+    "common.selAll": "全选",
+    "common.selNone": "全不选",
+    "common.clear": "清空",
+    "common.close": "关闭",
+    "common.cancel": "取消",
+    "hero.title": "引擎状态",
+    "hero.ready": "就绪",
+    "hero.paused": "已暂停",
+    "hero.runningSuffix": "{type}中",
+    "hero.runningFallback": "{type}执行中…",
+    "hero.processing": "处理中",
+    "hero.headlineIdle": "准备导入歌单或文本清单",
+    "hero.headlineLoaded": "已加载歌单 ({n} 首)，随时可下载",
+    "hero.switchDefaultLib": "切换默认曲库",
+    "hero.jobProgress": "作业进度",
+    "hero.historyJobs": "历史任务 {n} 条",
+    "hero.rateAndLock": "限速与锁",
+    "hero.singleQueue": "单队列串行",
+    "hero.quickAction": "快捷操作",
+    "hero.quickActionTitle": "聚焦导入 / 暂停或继续下载",
+    "hero.dirPrefix": "曲库：{dir}",
+    "hero.resumedToast": "已恢复下载任务",
+    "hero.pausingToast": "将在当前曲目完成后暂停",
+    "stat.losslessRate": "本地曲库无损率",
+    "stat.libSub": "MP3 {mp3} · OGG {ogg} · 共 {total} 首",
+    "stat.recentAudit": "最近质量审计",
+    "stat.passRate": "通过率",
+    "stat.noAuditYet": "尚未加载审计记录",
+    "stat.auditSub": "通过 {pass} / 不合格 {fail}（共 {total} 个 FLAC）",
+    "imp.step1Title": "1 · 导入歌单与查重",
+    "imp.step1Sub": "拉元数据后与本地曲库三层比对",
+    "imp.tabUri": "歌单链接 / URI",
+    "imp.tabList": "文本清单 (--list)",
+    "imp.uriPh": "粘贴歌单链接或 URI：B站收藏夹 / y.qq.com / 网易云 playlist / spotify: URI",
+    "imp.btnUri": "拉取并查重",
+    "imp.uriHint": "支持 bilibili.com 收藏夹、y.qq.com 歌单、网易云公开 playlist、spotify: URI。若为私密歌单，可切换「文本清单」。",
+    "imp.listPh": "每行一首：歌名 - 歌手（也支持 歌名-歌手 或只写歌名；末尾可选加 | 时长秒）\n例：快晴 - Orangestar\n例：又三郎-ヨルシカ",
+    "imp.btnList": "按文本清单查重",
+    "imp.listHint": "只填歌名时自动联网展开多个歌手/版本供选择；填「歌名 - 歌手」直接本地查重。",
+    "imp.saveTo": "本次下载保存到",
+    "imp.dlDirPh": "留空则保存到默认曲库",
+    "imp.dlDirPhWith": "留空则保存到默认曲库（{dir}）",
+    "imp.saveToHint": "支持手动输入/粘贴路径或点击「选择文件夹」；留空则沿用默认曲库目录。",
+    "imp.step2Title": "2 · 勾选要下载的曲目",
+    "imp.filterPh": "过滤歌名或歌手…",
+    "imp.selNew": "只选新曲",
+    "imp.source": "下载源",
+    "imp.srcAuto": "auto（无损优先）",
+    "imp.dlCover": "下载封面",
+    "imp.dlLyrics": "下载歌词",
+    "imp.incEx": "含已有曲目重下",
+    "imp.btnDl": "开始下载",
+    "imp.tableCap": "导入的歌单曲目及本地去重状态",
+    "imp.colTitle": "歌名",
+    "imp.colArtist": "歌手",
+    "imp.colDur": "时长",
+    "imp.colStatus": "状态",
+    "imp.colSelect": "选择",
+    "imp.statusExisting": "已有",
+    "imp.statusNew": "新曲",
+    "imp.emptyTracks": "没有匹配的曲目",
+    "imp.trackSummary": "共 {total} 首 · 新曲 {newCount} · 已有 {exists}",
+    "imp.toastExpanded": "已展开 {n} 个版本候选，请勾选需要的版本",
+    "imp.toastUriEmpty": "请先填入歌单链接或 URI",
+    "imp.toastUriDone": "歌单元数据拉取与查重完成",
+    "imp.toastListEmpty": "文本清单不能为空",
+    "imp.toastListDone": "文本清单查重完成",
+    "imp.toastNeedImport": "请先导入歌单",
+    "imp.toastNeedTrack": "请至少勾选一首曲目再下载",
+    "imp.unknownTrack": "未知曲目",
+    "imp.existingTag": "（已有: {file}）",
+    "imp.moreExisting": "\n…等共 {n} 首",
+    "imp.confirmExisting": "曲库中已有类似曲目，是否继续下载？\n\n{samples}{more}",
+    "jobs.title": "任务列表",
+    "jobs.sub": "同一时间仅执行一个作业，共享限速与曲库锁",
+    "jobs.empty": "还没有任务 —— 前往「歌单导入」发起查重与下载",
+    "jobs.logTitle": "作业日志",
+    "jobs.logTitleWith": "作业日志 · {type}",
+    "jobs.copyLog": "复制日志",
+    "jobs.pause": "⏸ 暂停",
+    "jobs.resume": "▶ 继续",
+    "jobs.skipTrack": "⏭ 跳过这首",
+    "jobs.runningCount": "进行中 {n} · {type}",
+    "jobs.stRunning": "进行中",
+    "jobs.stQueued": "排队中",
+    "jobs.stDone": "已完成",
+    "jobs.stError": "失败",
+    "jobs.pausingNote": "已暂停（当前曲目完成后停下）",
+    "jobs.processing": "正在处理：{name}",
+    "jobs.targetDir": "目标：{dir}",
+    "jobs.failToast": "作业执行失败，请查看日志详情",
+    "jobs.copyOk": "日志已复制到剪贴板",
+    "jobs.copyErr": "复制失败",
+    "jobs.skipToast": "已请求跳过当前曲目",
+    "up.step1Title": "1 · 待升级清单",
+    "up.queueCount": "{checked} / {total} 个文件",
+    "up.clearList": "清空清单",
+    "up.scanDir": "扫描目录",
+    "up.onlyMp3": "仅 MP3",
+    "up.onlyOgg": "仅 OGG",
+    "up.filterPh": "过滤清单文件名…",
+    "up.btnScan": "扫描载入清单",
+    "up.empty": "待升级清单为空 —— 请在上方选择目录「扫描载入清单」，或从「质量审计」传入不合格文件",
+    "up.emptyFilter": "没有匹配过滤关键词的待升级文件",
+    "up.step2Title": "2 · 升级执行",
+    "up.step2Sub": "MP3/OGG 或假无损重拉真 FLAC；已是真 FLAC 仅就地补封面与标签（免重下）",
+    "up.retryTitle": "清空跳名单全量重试",
+    "up.retrySub": "连续失败 ≥ 2 次的曲目默认记入跳名单；开启后会重置记录重新尝试",
+    "up.btnStart": "开始无损升级",
+    "up.hint": "替换前自动备份旧文件并对比 PCM 指纹留证。",
+    "up.tagAudit": "审计导入",
+    "up.toastNoFiles": "没有可传入升级的文件",
+    "up.toastSent": "已将 {n} 个文件传入待升级清单",
+    "up.toastCleared": "已清空待升级清单",
+    "up.toastLoaded": "已载入 {n} 个待升级文件",
+    "up.toastNeedFiles": "请先扫描载入或从质量审计传入待升级文件",
+    "aud.title": "四项质量门审计",
+    "aud.sub": "实测 ffprobe：时长偏差 / 缺标签 / 缺封面 / 伪 FLAC",
+    "aud.pickFiles": "选定文件列表",
+    "aud.btnStart": "开始审计",
+    "aud.dirLabel": "审计目录",
+    "aud.pickSummary": "已选 {sel} / {total} 个文件",
+    "aud.pickFilterPh": "过滤待审文件名…",
+    "aud.pickEmpty": "目录下没有匹配的 .flac 文件",
+    "aud.emptyHint": "不选定具体文件时将扫描目录内全部 .flac；若有历史审计记录将自动回显在下方。",
+    "aud.detailTitle": "不合格文件明细",
+    "aud.recent": "最近",
+    "aud.sendSel": "选中传入升级",
+    "aud.sendAll": "全部不合格传入升级",
+    "aud.searchPh": "按文件名搜索…",
+    "aud.tableCap": "未通过四项质量门的 FLAC 文件列表",
+    "aud.colFile": "文件名",
+    "aud.colIssues": "触发问题",
+    "aud.tileTotal": "扫描 FLAC",
+    "aud.tilePass": "四项全过",
+    "aud.tileFail": "存在异常",
+    "aud.tileRate": "合格率",
+    "aud.allFilter": "全部",
+    "aud.countShown": "显示 {shown} / {total} 个不合格文件",
+    "aud.emptyFilter": "没有符合当前筛选条件的不合格文件",
+    "aud.toastDone": "曲库质量审计完成",
+    "ded.step1Title": "1 · 曲库查重扫描",
+    "ded.step1Sub": "按歌名、艺人别名与时长（±3s）聚类疑似重复文件，绝不自动删除，全权由你确认处理",
+    "ded.notScanned": "未扫描",
+    "ded.scanning": "扫描中…",
+    "ded.scanFail": "扫描失败",
+    "ded.dirLabel": "查重目录",
+    "ded.btnScan": "开始扫描查重",
+    "ded.filterPh": "过滤歌名、艺人或文件名…",
+    "ded.step2Title": "2 · 疑似重复分组",
+    "ded.step2Sub": "请勾选确认要清理的冗余副本；操作会移入 staging/dedupe_trash 回收站",
+    "ded.keepBest": "保留最优（勾选其余）",
+    "ded.clearSel": "清空勾选",
+    "ded.moveTrash": "移入回收站",
+    "ded.empty": "点击上方「开始扫描查重」列出曲库中可能重复的曲目分组",
+    "ded.noGroups": "未发现疑似重复的曲目分组（或尚未扫描）",
+    "ded.noMatch": "没有匹配过滤关键词的重复分组",
+    "ded.unknownTitle": "未知标题",
+    "ded.unknownArtist": "未知艺人",
+    "ded.fileCount": "{n} 个文件",
+    "ded.summary": "{groups} 组 · {files} 个文件",
+    "ded.toastFound": "发现 {n} 组疑似重复",
+    "ded.toastNone": "未发现重复曲目",
+    "ded.toastAutoSel": "已按「FLAC / 高码率 / 大文件优先」勾选 {n} 个副本，请核对后操作",
+    "ded.toastNeedSel": "请先勾选要清理的副本文件",
+    "ded.confirmDel": "确认将选中的 {n} 个重复文件移入回收站（staging/dedupe_trash）？",
+    "ded.toastMoved": "已移入回收站 {n} 个文件",
+    "theme.title": "外观与主题引擎",
+    "theme.lang": "界面语言",
+    "theme.mode": "主题模式",
+    "theme.auto": "跟随系统",
+    "theme.light": "浅色",
+    "theme.dark": "深色",
+    "theme.seed": "种子主题色",
+    "theme.seedAuto": "自动配对（浅蓝 / 深琥珀）",
+    "theme.pureBlack": "纯黑深色 (OLED)",
+    "theme.glass": "Liquid Glass 浮层",
+    "dir.title": "选择下载保存目录",
+    "dir.up": "上一级",
+    "dir.go": "跳转",
+    "dir.choose": "选择此目录",
+    "dir.emptySub": "该目录下暂无子文件夹，可直接点击「选择此目录」",
+    "dir.toastDefaultSaved": "默认曲库已切换并保存：{dir}",
+    "dir.toastPicked": "已选定目录：{dir}",
+    "dir.toastReset": "已恢复为默认曲库目录",
+    "common.scanDirPh": "留空则扫描默认曲库",
+    "common.scanDirPhWith": "留空则扫描默认曲库（{dir}）",
+    "type.prepare": "歌单查重",
+    "type.download": "下载",
+    "type.upgrade": "无损升级",
+    "type.audit": "质量审计",
+    "type.custom": "自定义",
+    "st.downloaded": "下载成功",
+    "st.already_exists": "已存在跳过",
+    "st.skipped": "手动跳过",
+    "st.low_confidence": "未匹配(低置信度，未下载)",
+    "st.no_result": "未搜到结果",
+    "st.no_source": "无可用音源",
+    "st.search_failed": "搜索失败",
+    "st.failed": "下载失败",
+  },
+  en: {
+    "nav.import": "Import",
+    "nav.upgrade": "Upgrade",
+    "nav.audit": "Quality Audit",
+    "nav.dedupe": "Deduplicate",
+    "nav.jobs": "Jobs",
+    "dock.import": "Import",
+    "dock.upgrade": "Upgrade",
+    "dock.audit": "Audit",
+    "dock.dedupe": "Dedupe",
+    "dock.jobs": "Jobs",
+    "sb.collapse": "Collapse sidebar",
+    "sb.switchLib": "Switch",
+    "sb.appearance": "Appearance",
+    "sb.tracksCount": "<strong>{n}</strong> tracks",
+    "topbar.toggleTheme": "Toggle light/dark theme",
+    "topbar.sub": "Library {total} tracks · FLAC {flac} ({pct}%)",
+    "common.idle": "Idle",
+    "common.details": "Details",
+    "common.pickFolder": "Browse",
+    "common.resetDefault": "Reset",
+    "common.selAll": "Select All",
+    "common.selNone": "Deselect All",
+    "common.clear": "Clear",
+    "common.close": "Close",
+    "common.cancel": "Cancel",
+    "hero.title": "Engine Status",
+    "hero.ready": "Ready",
+    "hero.paused": "Paused",
+    "hero.runningSuffix": "{type}",
+    "hero.runningFallback": "Running {type}…",
+    "hero.processing": "Processing",
+    "hero.headlineIdle": "Ready to import playlist or track list",
+    "hero.headlineLoaded": "Playlist loaded ({n} tracks), ready to download",
+    "hero.switchDefaultLib": "Switch Library",
+    "hero.jobProgress": "Job Progress",
+    "hero.historyJobs": "{n} history jobs",
+    "hero.rateAndLock": "Queue & Lock",
+    "hero.singleQueue": "Serial Queue",
+    "hero.quickAction": "Quick Action",
+    "hero.quickActionTitle": "Focus import / Pause or resume download",
+    "hero.dirPrefix": "Library: {dir}",
+    "hero.resumedToast": "Download resumed",
+    "hero.pausingToast": "Will pause after current track finishes",
+    "stat.losslessRate": "Lossless Ratio",
+    "stat.libSub": "MP3 {mp3} · OGG {ogg} · {total} total",
+    "stat.recentAudit": "Latest Audit",
+    "stat.passRate": "Pass Rate",
+    "stat.noAuditYet": "No audit record loaded yet",
+    "stat.auditSub": "Passed {pass} / Failed {fail} ({total} FLACs)",
+    "imp.step1Title": "1 · Import Playlist & Dedupe",
+    "imp.step1Sub": "Fetch metadata and match against local library (3-tier)",
+    "imp.tabUri": "Playlist URL / URI",
+    "imp.tabList": "Text List (--list)",
+    "imp.uriPh": "Paste playlist URL or URI: Bilibili / y.qq.com / NetEase / spotify: URI",
+    "imp.btnUri": "Fetch & Check",
+    "imp.uriHint": "Supports bilibili.com favorites, y.qq.com playlists, public NetEase playlists, and spotify: URIs. For private playlists, use Text List.",
+    "imp.listPh": "One track per line: Title - Artist (or Title only; optional | duration_sec)\nExample: Kaisei - Orangestar\nExample: Matasaburo-Yorushika",
+    "imp.btnList": "Check Text List",
+    "imp.listHint": "Title-only lines automatically expand online artist/version candidates; 'Title - Artist' checks local library directly.",
+    "imp.saveTo": "Save downloads to",
+    "imp.dlDirPh": "Leave blank to save to default library",
+    "imp.dlDirPhWith": "Leave blank to use default library ({dir})",
+    "imp.saveToHint": "Enter/paste a path or click Browse; leave empty to use the default library folder.",
+    "imp.step2Title": "2 · Select Tracks to Download",
+    "imp.filterPh": "Filter by title or artist…",
+    "imp.selNew": "New Only",
+    "imp.source": "Source",
+    "imp.srcAuto": "auto (Lossless First)",
+    "imp.dlCover": "Cover Art",
+    "imp.dlLyrics": "Lyrics",
+    "imp.incEx": "Re-download Existing",
+    "imp.btnDl": "Download",
+    "imp.tableCap": "Imported playlist tracks and local dedupe status",
+    "imp.colTitle": "Title",
+    "imp.colArtist": "Artist",
+    "imp.colDur": "Duration",
+    "imp.colStatus": "Status",
+    "imp.colSelect": "Select",
+    "imp.statusExisting": "Exists",
+    "imp.statusNew": "New",
+    "imp.emptyTracks": "No matching tracks",
+    "imp.trackSummary": "{total} total · {newCount} new · {exists} existing",
+    "imp.toastExpanded": "Expanded {n} candidate versions; please select the ones you want",
+    "imp.toastUriEmpty": "Please enter a playlist URL or URI first",
+    "imp.toastUriDone": "Playlist metadata fetched & checked",
+    "imp.toastListEmpty": "Text list cannot be empty",
+    "imp.toastListDone": "Text list check complete",
+    "imp.toastNeedImport": "Please import a playlist first",
+    "imp.toastNeedTrack": "Select at least one track to download",
+    "imp.unknownTrack": "Unknown Track",
+    "imp.existingTag": " (Exists: {file})",
+    "imp.moreExisting": "\n…and {n} more",
+    "imp.confirmExisting": "Similar tracks already exist in your library. Continue downloading?\n\n{samples}{more}",
+    "jobs.title": "Jobs",
+    "jobs.sub": "Only one job runs at a time, sharing rate limit and library lock",
+    "jobs.empty": "No jobs yet — go to Import to fetch & download a playlist",
+    "jobs.logTitle": "Job Log",
+    "jobs.logTitleWith": "Job Log · {type}",
+    "jobs.copyLog": "Copy Log",
+    "jobs.pause": "⏸ Pause",
+    "jobs.resume": "▶ Resume",
+    "jobs.skipTrack": "⏭ Skip Track",
+    "jobs.runningCount": "Running {n} · {type}",
+    "jobs.stRunning": "Running",
+    "jobs.stQueued": "Queued",
+    "jobs.stDone": "Done",
+    "jobs.stError": "Failed",
+    "jobs.pausingNote": "Paused (will stop after current track finishes)",
+    "jobs.processing": "Processing: {name}",
+    "jobs.targetDir": "Target: {dir}",
+    "jobs.failToast": "Job failed — check the log for details",
+    "jobs.copyOk": "Log copied to clipboard",
+    "jobs.copyErr": "Copy failed",
+    "jobs.skipToast": "Requested to skip current track",
+    "up.step1Title": "1 · Upgrade Queue",
+    "up.queueCount": "{checked} / {total} files",
+    "up.clearList": "Clear Queue",
+    "up.scanDir": "Scan Folder",
+    "up.onlyMp3": "MP3 Only",
+    "up.onlyOgg": "OGG Only",
+    "up.filterPh": "Filter filenames…",
+    "up.btnScan": "Scan & Load",
+    "up.empty": "Upgrade queue is empty — select a folder above and click Scan & Load, or send failed files from Quality Audit",
+    "up.emptyFilter": "No queued files match the filter",
+    "up.step2Title": "2 · Run Upgrade",
+    "up.step2Sub": "Re-fetch true FLAC for MP3/OGG or fake lossless; true FLACs get covers & tags repaired in-place",
+    "up.retryTitle": "Clear skip list & retry all",
+    "up.retrySub": "Tracks failing ≥ 2 consecutive times are skipped by default; enable to reset and retry",
+    "up.btnStart": "Start Upgrade",
+    "up.hint": "Old files are backed up and PCM-fingerprinted before replacement.",
+    "up.tagAudit": "From Audit",
+    "up.toastNoFiles": "No files to send to upgrade",
+    "up.toastSent": "Sent {n} file(s) to upgrade queue",
+    "up.toastCleared": "Upgrade queue cleared",
+    "up.toastLoaded": "Loaded {n} file(s) for upgrade",
+    "up.toastNeedFiles": "Scan a folder or send files from Quality Audit first",
+    "aud.title": "4-Gate Quality Audit",
+    "aud.sub": "ffprobe check: Duration / Tags / Cover Art / Fake FLAC",
+    "aud.pickFiles": "Pick Files",
+    "aud.btnStart": "Start Audit",
+    "aud.dirLabel": "Audit Folder",
+    "aud.pickSummary": "{sel} / {total} selected",
+    "aud.pickFilterPh": "Filter filenames…",
+    "aud.pickEmpty": "No matching .flac files in this folder",
+    "aud.emptyHint": "Scans all .flac files in the folder unless specific files are picked; previous audit results load automatically below.",
+    "aud.detailTitle": "Failed Files",
+    "aud.recent": "Latest",
+    "aud.sendSel": "Send Selected to Upgrade",
+    "aud.sendAll": "Send All Failed to Upgrade",
+    "aud.searchPh": "Search filename…",
+    "aud.tableCap": "FLAC files that failed one or more quality gates",
+    "aud.colFile": "Filename",
+    "aud.colIssues": "Issues",
+    "aud.tileTotal": "Scanned FLAC",
+    "aud.tilePass": "All Passed",
+    "aud.tileFail": "Issues Found",
+    "aud.tileRate": "Pass Rate",
+    "aud.allFilter": "All",
+    "aud.countShown": "Showing {shown} / {total} failed files",
+    "aud.emptyFilter": "No failed files match the current filter",
+    "aud.toastDone": "Quality audit completed",
+    "ded.step1Title": "1 · Duplicate Scan",
+    "ded.step1Sub": "Cluster suspected duplicates by title, artist aliases & duration (±3s). Never auto-deletes.",
+    "ded.notScanned": "Not Scanned",
+    "ded.scanning": "Scanning…",
+    "ded.scanFail": "Scan Failed",
+    "ded.dirLabel": "Scan Folder",
+    "ded.btnScan": "Start Scan",
+    "ded.filterPh": "Filter by title, artist or filename…",
+    "ded.step2Title": "2 · Duplicate Groups",
+    "ded.step2Sub": "Select redundant copies to clean up; files are moved safely to staging/dedupe_trash",
+    "ded.keepBest": "Keep Best (Select Others)",
+    "ded.clearSel": "Clear Selection",
+    "ded.moveTrash": "Move to Trash",
+    "ded.empty": "Click Start Scan above to list potential duplicate groups in your library",
+    "ded.noGroups": "No duplicate groups found (or not scanned yet)",
+    "ded.noMatch": "No duplicate groups match the filter",
+    "ded.unknownTitle": "Unknown Title",
+    "ded.unknownArtist": "Unknown Artist",
+    "ded.fileCount": "{n} files",
+    "ded.summary": "{groups} groups · {files} files",
+    "ded.toastFound": "Found {n} suspected duplicate group(s)",
+    "ded.toastNone": "No duplicates found",
+    "ded.toastAutoSel": "Selected {n} redundant copy/copies (keeping FLAC / higher bitrate / larger file)",
+    "ded.toastNeedSel": "Select at least one duplicate file first",
+    "ded.confirmDel": "Move {n} selected duplicate file(s) to trash (staging/dedupe_trash)?",
+    "ded.toastMoved": "Moved {n} file(s) to trash",
+    "theme.title": "Appearance & Theme",
+    "theme.lang": "Language",
+    "theme.mode": "Theme Mode",
+    "theme.auto": "System",
+    "theme.light": "Light",
+    "theme.dark": "Dark",
+    "theme.seed": "Accent Color",
+    "theme.seedAuto": "Auto Pair (Azure / Amber)",
+    "theme.pureBlack": "Pure Black (OLED)",
+    "theme.glass": "Liquid Glass Overlay",
+    "dir.title": "Select Folder",
+    "dir.up": "Up",
+    "dir.go": "Go",
+    "dir.choose": "Select This Folder",
+    "dir.emptySub": "No subfolders here; click Select This Folder to confirm",
+    "dir.toastDefaultSaved": "Default library updated: {dir}",
+    "dir.toastPicked": "Selected folder: {dir}",
+    "dir.toastReset": "Reset to default library folder",
+    "common.scanDirPh": "Leave blank to scan default library",
+    "common.scanDirPhWith": "Leave blank to scan default library ({dir})",
+    "type.prepare": "Playlist Check",
+    "type.download": "Download",
+    "type.upgrade": "Upgrade",
+    "type.audit": "Quality Audit",
+    "type.custom": "Custom",
+    "st.downloaded": "Downloaded",
+    "st.already_exists": "Already Exists",
+    "st.skipped": "Skipped",
+    "st.low_confidence": "Low Confidence (Skipped)",
+    "st.no_result": "No Result",
+    "st.no_source": "No Source",
+    "st.search_failed": "Search Failed",
+    "st.failed": "Failed",
+  },
+};
+
+function getLang() {
+  try {
+    const qp = new URLSearchParams(location.search).get("lang");
+    if (qp === "en" || qp === "zh") return qp;
+    const saved = localStorage.getItem(LANG_KEY);
+    if (saved === "en" || saved === "zh") return saved;
+  } catch (_) {}
+  return "zh";
+}
+
+let currentLang = getLang();
+let currentView = "import";
+
+function t(key, vars) {
+  const dict = I18N[currentLang] || I18N.zh;
+  let str = dict[key] ?? I18N.zh[key] ?? key;
+  if (vars) {
+    for (const [k, v] of Object.entries(vars)) {
+      str = str.replaceAll(`{${k}}`, String(v));
+    }
+  }
+  return str;
+}
+
+function trType(type) {
+  return t(`type.${type}`) !== `type.${type}` ? t(`type.${type}`) : (type || "");
+}
+
+function trIssue(issue) {
+  if (currentLang !== "en") return issue;
+  if (issue === "缺封面") return "Missing Cover";
+  if (issue === "缺标签") return "Missing Tags";
+  if (issue === "无法读取时长") return "Unreadable Duration";
+  if (issue.startsWith("时长差")) return "Duration Diff " + issue.slice(3);
+  if (issue.startsWith("编解码异常")) return "Codec Anomaly" + issue.slice(5);
+  return issue;
+}
+
+function trDedupeReason(reason) {
+  if (currentLang !== "en" || !reason) return reason || "";
+  return reason
+    .replaceAll("同长(≤4s)", "Similar Duration (≤4s)")
+    .replaceAll("同艺人", "Same Artist")
+    .replaceAll("同歌名", "Same Title");
+}
+
+function applyLang(lang, persist = true) {
+  currentLang = lang === "en" ? "en" : "zh";
+  if (persist) {
+    try { localStorage.setItem(LANG_KEY, currentLang); } catch (_) {}
+  }
+  document.documentElement.lang = currentLang === "en" ? "en" : "zh-CN";
+  document.documentElement.dataset.lang = currentLang;
+
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  document.querySelectorAll("[data-i18n-ph]").forEach((el) => {
+    el.placeholder = t(el.dataset.i18nPh);
+  });
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    el.title = t(el.dataset.i18nTitle);
+  });
+  document.querySelectorAll("[data-i18n-aria]").forEach((el) => {
+    el.setAttribute("aria-label", t(el.dataset.i18nAria));
+  });
+  document.querySelectorAll("[data-lang]").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.lang === currentLang));
+  });
+  if ($("#btn-lang")) {
+    $("#btn-lang").textContent = currentLang === "en" ? "中文" : "EN";
+  }
+  const autoSw = $('#seed-swatches [data-seed="auto"]');
+  if (autoSw) {
+    autoSw.title = t("theme.seedAuto");
+    autoSw.setAttribute("aria-label", t("theme.seedAuto"));
+  }
+  $("#topbar-title").textContent = t(`nav.${currentView}`) || "flac-hunter";
+  if (typeof refreshState === "function" && window._stateReady) {
+    refreshState();
+    if (loadedRecords.length) renderTracksTable();
+    if (auditData) renderAudit();
+    if (upgradeQueueItems.length) renderUpgradeQueue();
+    if (dedupeGroups.length) renderDedupeGroups();
+    if ($("#aud-pick-box") && !$("#aud-pick-box").hidden) renderAuditPickList();
+  }
+}
+
 const SEEDS = [
   { id: "auto", label: "自动配对（浅蓝 / 深琥珀）", color: "linear-gradient(135deg,#0A7AFF 50%,#F59E3D 50%)" },
   { id: "azure", label: "Classic Blue", h: 212, s: 100, lL: 52, lD: 63, color: "#0A7AFF" },
@@ -2007,6 +2553,13 @@ $("#btn-quick-theme").onclick = () => {
   setScheme(target === sys ? "light dark" : target);
 };
 
+if ($("#btn-lang")) {
+  $("#btn-lang").onclick = () => applyLang(currentLang === "en" ? "zh" : "en");
+}
+document.querySelectorAll("[data-lang]").forEach((b) => {
+  b.onclick = () => applyLang(b.dataset.lang);
+});
+
 document.querySelectorAll("[data-scheme]").forEach((b) => {
   b.onclick = () => setScheme(b.dataset.scheme);
 });
@@ -2040,12 +2593,14 @@ $("#pref-glass").onchange = (e) => {
 mediaDark.addEventListener("change", applyTheme);
 window.addEventListener("storage", (e) => {
   if (e.key === SCHEME_KEY || e.key === PREFS_KEY) applyTheme();
+  if (e.key === LANG_KEY) applyLang(getLang(), false);
 });
 
 $("#btn-collapse").onclick = () => $("#fc-shell").classList.toggle("is-collapsed");
 
 /* ---------- Navigation ---------- */
 function showTab(name) {
+  currentView = name;
   document.querySelectorAll("[data-tab]").forEach((b) => {
     if (b.dataset.tab === name) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
@@ -2053,7 +2608,7 @@ function showTab(name) {
   document.querySelectorAll("main section[data-view]").forEach((sec) => {
     sec.hidden = sec.dataset.view !== name;
   });
-  $("#topbar-title").textContent = VIEW_TITLE[name] || "flac-hunter";
+  $("#topbar-title").textContent = t(`nav.${name}`) || "flac-hunter";
 }
 document.querySelectorAll("[data-tab]").forEach((b) => {
   b.onclick = () => showTab(b.dataset.tab);
@@ -2127,20 +2682,21 @@ function renderAudit() {
   const rate = A.total > 0 ? Math.round((A.pass * 100) / A.total) : 0;
 
   $("#stat-audit-rate").textContent = A.total > 0 ? rate + "%" : "—";
-  $("#stat-audit-sub").textContent = `通过 ${A.pass} / 不合格 ${A.fail}（共 ${A.total} 个 FLAC）`;
+  $("#stat-audit-sub").textContent = t("stat.auditSub", { pass: A.pass, fail: A.fail, total: A.total });
   $("#wavy-audit-path").setAttribute("d", buildWavyPath(rate));
 
   $("#audit-tiles").innerHTML =
-    `<div class="fc-card"><div class="fc-stat-num fc-tabular">${A.total}</div><div class="fc-stat-sub">扫描 FLAC</div></div>` +
-    `<div class="fc-card"><div class="fc-stat-num fc-tabular" style="color:var(--fc-success);">${A.pass}</div><div class="fc-stat-sub">四项全过</div></div>` +
-    `<div class="fc-card"><div class="fc-stat-num fc-tabular" style="color:var(--fc-error);">${A.fail}</div><div class="fc-stat-sub">存在异常</div></div>` +
-    `<div class="fc-card"><div class="fc-stat-num fc-tabular" style="color:var(--fc-primary);">${rate}%</div><div class="fc-stat-sub">合格率</div></div>`;
+    `<div class="fc-card"><div class="fc-stat-num fc-tabular">${A.total}</div><div class="fc-stat-sub">${esc(t("aud.tileTotal"))}</div></div>` +
+    `<div class="fc-card"><div class="fc-stat-num fc-tabular" style="color:var(--fc-success);">${A.pass}</div><div class="fc-stat-sub">${esc(t("aud.tilePass"))}</div></div>` +
+    `<div class="fc-card"><div class="fc-stat-num fc-tabular" style="color:var(--fc-error);">${A.fail}</div><div class="fc-stat-sub">${esc(t("aud.tileFail"))}</div></div>` +
+    `<div class="fc-card"><div class="fc-stat-num fc-tabular" style="color:var(--fc-primary);">${rate}%</div><div class="fc-stat-sub">${esc(t("aud.tileRate"))}</div></div>`;
 
   const chips = ["全部", ...Object.entries(A.by_issue || {}).sort((a, b) => b[1] - a[1]).map(([k]) => k)];
   const chipsEl = $("#audit-chips");
   chipsEl.innerHTML = chips.map((k) => {
     const n = k === "全部" ? A.fail : (A.by_issue[k] || 0);
-    return `<button type="button" class="fc-tab" role="tab" aria-selected="${k === auditFilter ? "true" : "false"}" data-k="${esc(k)}">${esc(k)} <span class="fc-tabular">${n}</span></button>`;
+    const label = k === "全部" ? t("aud.allFilter") : trIssue(k);
+    return `<button type="button" class="fc-tab" role="tab" aria-selected="${k === auditFilter ? "true" : "false"}" data-k="${esc(k)}">${esc(label)} <span class="fc-tabular">${n}</span></button>`;
   }).join("");
   chipsEl.querySelectorAll('[role="tab"]').forEach((btn) => {
     btn.onclick = () => { auditFilter = btn.dataset.k; renderAudit(); };
@@ -2150,12 +2706,12 @@ function renderAudit() {
   const rows = (A.files || []).filter((f) =>
     (auditFilter === "全部" || (f.issues || []).includes(auditFilter)) &&
     (!kw || (f.name || "").toLowerCase().includes(kw)));
-  $("#audit-count").textContent = `显示 ${rows.length} / ${A.fail} 个不合格文件`;
+  $("#audit-count").textContent = t("aud.countShown", { shown: rows.length, total: A.fail });
   $("#audit-files tbody").innerHTML = rows.slice(0, 500).map((f) =>
-    `<tr><td data-label="选择"><input type="checkbox" class="aud-sel" data-name="${esc(f.name)}" aria-label="选择 ${esc(f.name)}"></td>` +
-    `<td data-label="文件名" title="${esc(f.name)}">${esc(f.name)}</td>` +
-    `<td data-label="触发问题">${(f.issues || []).map((i) => `<span class="fc-chip fc-chip--error" style="margin-inline-end:4px;">${esc(i)}</span>`).join("")}</td></tr>`
-  ).join("") || `<tr><td colspan="3" class="fc-empty">没有符合当前筛选条件的不合格文件</td></tr>`;
+    `<tr><td data-label="${esc(t("imp.colSelect"))}"><input type="checkbox" class="aud-sel" data-name="${esc(f.name)}" aria-label="${esc(t("imp.colSelect"))} ${esc(f.name)}"></td>` +
+    `<td data-label="${esc(t("aud.colFile"))}" title="${esc(f.name)}">${esc(f.name)}</td>` +
+    `<td data-label="${esc(t("aud.colIssues"))}">${(f.issues || []).map((i) => `<span class="fc-chip fc-chip--error" style="margin-inline-end:4px;">${esc(trIssue(i))}</span>`).join("")}</td></tr>`
+  ).join("") || `<tr><td colspan="3" class="fc-empty">${esc(t("aud.emptyFilter"))}</td></tr>`;
   $("#aud-chk-head").checked = false;
   updateAuditSelCount();
 }
@@ -2181,7 +2737,7 @@ $("#audit-search").oninput = renderAudit;
 function showAudit(A) {
   auditData = A;
   auditFilter = "全部";
-  $("#audit-when").textContent = A.when || "最近";
+  $("#audit-when").textContent = A.when || t("aud.recent");
   renderAudit();
   $("#audit-result").hidden = false;
   $("#audit-empty-hint").hidden = true;
@@ -2190,7 +2746,7 @@ function showAudit(A) {
 /* ---------- Import & Track Selection ---------- */
 $("#btn-uri").onclick = async () => {
   const uri = $("#uri").value.trim();
-  if (!uri) return showToast("请先填入歌单链接或 URI", "err");
+  if (!uri) return showToast(t("imp.toastUriEmpty"), "err");
   const dlDir = ($("#dl-dir")?.value || "").trim();
   const payload = dlDir ? { uri, music_dir: dlDir } : { uri };
   try {
@@ -2201,7 +2757,7 @@ $("#btn-uri").onclick = async () => {
     watchJob(j.id, async () => {
       await loadTracks(j.tracks_path);
       showTab("import");
-      showToast("歌单元数据拉取与查重完成");
+      showToast(t("imp.toastUriDone"));
     });
     showTab("jobs");
   } catch (e) { showToast(e.message, "err"); }
@@ -2209,7 +2765,7 @@ $("#btn-uri").onclick = async () => {
 
 $("#btn-list").onclick = async () => {
   const list_text = $("#listtext").value.trim();
-  if (!list_text) return showToast("文本清单不能为空", "err");
+  if (!list_text) return showToast(t("imp.toastListEmpty"), "err");
   const dlDir = ($("#dl-dir")?.value || "").trim();
   const payload = dlDir ? { list_text, music_dir: dlDir } : { list_text };
   try {
@@ -2220,7 +2776,7 @@ $("#btn-list").onclick = async () => {
     watchJob(j.id, async () => {
       await loadTracks(j.tracks_path);
       showTab("import");
-      showToast("文本清单查重完成");
+      showToast(t("imp.toastListDone"));
     });
     showTab("jobs");
   } catch (e) { showToast(e.message, "err"); }
@@ -2253,18 +2809,22 @@ function renderTracksTable() {
     const isChecked = prevState.has(rowKey) ? prevState.get(rowKey) : (!r.existing && !r.from_search);
     const tr = document.createElement("tr");
     tr.innerHTML =
-      `<td data-label="选择"><input type="checkbox" class="sel" data-key="${esc(rowKey)}" data-uri="${esc(r.uri || "")}" data-existing="${r.existing ? "1" : "0"}" data-exfile="${esc(r.existing_file || "")}" data-title="${esc(r.name || "")}" ${isChecked ? "checked" : ""} aria-label="选择 ${esc(r.name)}"></td>` +
+      `<td data-label="${esc(t("imp.colSelect"))}"><input type="checkbox" class="sel" data-key="${esc(rowKey)}" data-uri="${esc(r.uri || "")}" data-existing="${r.existing ? "1" : "0"}" data-exfile="${esc(r.existing_file || "")}" data-title="${esc(r.name || "")}" ${isChecked ? "checked" : ""} aria-label="${esc(t("imp.colSelect"))} ${esc(r.name)}"></td>` +
       `<td data-label="#" class="is-num">${esc(r.position)}</td>` +
-      `<td data-label="歌名" title="${esc(r.name)}"><strong>${esc(r.name)}</strong></td>` +
-      `<td data-label="歌手" title="${esc(art)}">${esc(art || "—")}</td>` +
-      `<td data-label="时长" class="is-num">${fmtDur(r.duration_ms)}</td>` +
-      `<td data-label="状态"><span class="fc-chip ${r.existing ? "fc-chip--ok" : "fc-chip--primary"}">${r.existing ? "已有" : "新曲"}</span></td>`;
+      `<td data-label="${esc(t("imp.colTitle"))}" title="${esc(r.name)}"><strong>${esc(r.name)}</strong></td>` +
+      `<td data-label="${esc(t("imp.colArtist"))}" title="${esc(art)}">${esc(art || "—")}</td>` +
+      `<td data-label="${esc(t("imp.colDur"))}" class="is-num">${fmtDur(r.duration_ms)}</td>` +
+      `<td data-label="${esc(t("imp.colStatus"))}"><span class="fc-chip ${r.existing ? "fc-chip--ok" : "fc-chip--primary"}">${esc(r.existing ? t("imp.statusExisting") : t("imp.statusNew"))}</span></td>`;
     tb.appendChild(tr);
   });
   if (shown === 0) {
-    tb.innerHTML = `<tr><td colspan="6" class="fc-empty">没有匹配的曲目</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="6" class="fc-empty">${esc(t("imp.emptyTracks"))}</td></tr>`;
   }
-  $("#track-summary").textContent = `共 ${loadedRecords.length} 首 · 新曲 ${loadedRecords.length - exists} · 已有 ${exists}`;
+  $("#track-summary").textContent = t("imp.trackSummary", {
+    total: loadedRecords.length,
+    newCount: loadedRecords.length - exists,
+    exists,
+  });
   updateSelCount();
 }
 
@@ -2276,7 +2836,7 @@ async function loadTracks(path) {
   $("#tracks tbody").innerHTML = "";
   renderTracksTable();
   if (loadedRecords.some((r) => r.from_search)) {
-    showToast(`已展开 ${loadedRecords.length} 个版本候选，请勾选需要的版本`, "ok");
+    showToast(t("imp.toastExpanded", { n: loadedRecords.length }), "ok");
   }
 }
 
@@ -2302,21 +2862,21 @@ $("#btn-selnone").onclick = () => {
 };
 
 $("#btn-dl").onclick = async () => {
-  if (!tracksPath) return showToast("请先导入歌单", "err");
+  if (!tracksPath) return showToast(t("imp.toastNeedImport"), "err");
   const allCbs = [...document.querySelectorAll("#tracks .sel")];
   const checkedCbs = allCbs.filter((c) => c.checked);
-  if (checkedCbs.length === 0) return showToast("请至少勾选一首曲目再下载", "err");
+  if (checkedCbs.length === 0) return showToast(t("imp.toastNeedTrack"), "err");
 
   const existingCbs = checkedCbs.filter((c) => c.dataset.existing === "1");
   let includeExisting = $("#inc-ex").checked;
   if (!includeExisting && existingCbs.length > 0) {
     const samples = existingCbs.slice(0, 3).map((c) => {
-      const t = c.dataset.title || c.dataset.key || "未知曲目";
+      const title = c.dataset.title || c.dataset.key || t("imp.unknownTrack");
       const exf = c.dataset.exfile;
-      return exf ? `${t}（已有: ${exf}）` : t;
+      return exf ? `${title}${t("imp.existingTag", { file: exf })}` : title;
     }).join("\n");
-    const more = existingCbs.length > 3 ? `\n…等共 ${existingCbs.length} 首` : "";
-    if (!confirm(`曲库中已有类似曲目，是否继续下载？\n\n${samples}${more}`)) {
+    const more = existingCbs.length > 3 ? t("imp.moreExisting", { n: existingCbs.length }) : "";
+    if (!confirm(t("imp.confirmExisting", { samples, more }))) {
       return;
     }
     includeExisting = true;
@@ -2357,7 +2917,7 @@ async function loadDirBrowser(targetPath) {
       .join("");
     $("#dir-list").innerHTML = (d.dirs && d.dirs.length)
       ? d.dirs.map((item) => `<button type="button" class="fc-dir-item" data-path="${esc(item.path)}">📁 <span>${esc(item.name)}</span></button>`).join("")
-      : '<div class="fc-hint" style="padding:12px;text-align:center;">该目录下暂无子文件夹，可直接点击「选择此目录」</div>';
+      : `<div class="fc-hint" style="padding:12px;text-align:center;">${esc(t("dir.emptySub"))}</div>`;
   } catch (e) {
     showToast(e.message, "err");
   }
@@ -2400,7 +2960,7 @@ $("#dir-choose").onclick = async () => {
       });
       $("#dir-dialog").close();
       await refreshState();
-      showToast(`默认曲库已切换并保存：${res.music_dir}`, "ok");
+      showToast(t("dir.toastDefaultSaved", { dir: res.music_dir }), "ok");
     } catch (e) {
       showToast(e.message, "err");
     }
@@ -2408,7 +2968,7 @@ $("#dir-choose").onclick = async () => {
   }
   if (dirTargetInput && $(dirTargetInput)) {
     $(dirTargetInput).value = chosen;
-    showToast(`已选定目录：${chosen}`, "ok");
+    showToast(t("dir.toastPicked", { dir: chosen }), "ok");
   }
   $("#dir-dialog").close();
 };
@@ -2416,7 +2976,7 @@ $("#dir-cancel").onclick = () => $("#dir-dialog").close();
 $("#dir-close").onclick = () => $("#dir-dialog").close();
 $("#btn-reset-dir").onclick = () => {
   $("#dl-dir").value = "";
-  showToast("已恢复为默认曲库目录");
+  showToast(t("dir.toastReset"));
 };
 
 /* ---------- Jobs & Runner Polling ---------- */
@@ -2431,25 +2991,26 @@ function updateHero(d, running) {
   const icon = $("#hero-action-icon");
   const active = running[0];
   window._currentMusicDir = d.music_dir || "";
-  $("#hero-dir").textContent = d.music_dir ? `曲库：${d.music_dir}` : "";
+  $("#hero-dir").textContent = d.music_dir ? t("hero.dirPrefix", { dir: d.music_dir }) : "";
   if ($("#sb-lib-dir")) $("#sb-lib-dir").textContent = d.music_dir || "";
   if (d.music_dir && $("#dl-dir")) {
-    $("#dl-dir").placeholder = `留空则保存到默认曲库（${d.music_dir}）`;
+    $("#dl-dir").placeholder = t("imp.dlDirPhWith", { dir: d.music_dir });
   }
   if (d.music_dir && $("#aud-dir")) {
-    $("#aud-dir").placeholder = `留空则扫描默认曲库（${d.music_dir}）`;
+    $("#aud-dir").placeholder = t("common.scanDirPhWith", { dir: d.music_dir });
   }
   if (d.music_dir && $("#up-dir")) {
-    $("#up-dir").placeholder = `留空则扫描默认曲库（${d.music_dir}）`;
+    $("#up-dir").placeholder = t("common.scanDirPhWith", { dir: d.music_dir });
   }
 
   if (active) {
     card.classList.add("is-running");
     $("#hero-chip").className = "fc-chip fc-chip--primary";
-    $("#hero-chip-text").textContent = active.paused ? "已暂停" : `${TYPE_NAME[active.type] || active.type}中`;
-    $("#hero-headline").textContent = active.current?.name || active.summary || `${TYPE_NAME[active.type] || active.type}执行中…`;
+    const tName = trType(active.type);
+    $("#hero-chip-text").textContent = active.paused ? t("hero.paused") : t("hero.runningSuffix", { type: tName });
+    $("#hero-headline").textContent = active.current?.name || active.summary || t("hero.runningFallback", { type: tName });
     const pct = active.total > 0 ? Math.min(100, Math.round((active.progress.done * 100) / active.total)) : 0;
-    $("#hero-progress").textContent = active.total > 0 ? `${active.progress.done} / ${active.total} (${pct}%)` : "处理中";
+    $("#hero-progress").textContent = active.total > 0 ? `${active.progress.done} / ${active.total} (${pct}%)` : t("hero.processing");
     btn.setAttribute("aria-pressed", String(!active.paused));
     icon.innerHTML = active.paused
       ? `<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>`
@@ -2457,9 +3018,9 @@ function updateHero(d, running) {
   } else {
     card.classList.remove("is-running");
     $("#hero-chip").className = "fc-chip fc-chip--ok";
-    $("#hero-chip-text").textContent = "就绪";
-    $("#hero-headline").textContent = tracksPath ? `已加载歌单 (${loadedRecords.length} 首)，随时可下载` : "准备导入歌单或文本清单";
-    $("#hero-progress").textContent = `历史任务 ${(d.jobs || []).length} 条`;
+    $("#hero-chip-text").textContent = t("hero.ready");
+    $("#hero-headline").textContent = tracksPath ? t("hero.headlineLoaded", { n: loadedRecords.length }) : t("hero.headlineIdle");
+    $("#hero-progress").textContent = t("hero.historyJobs", { n: (d.jobs || []).length });
     btn.setAttribute("aria-pressed", "false");
     icon.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>`;
   }
@@ -2473,7 +3034,7 @@ $("#hero-action-btn").onclick = async () => {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ paused: !running.paused }),
       });
-      showToast(running.paused ? "已恢复下载任务" : "将在当前曲目完成后暂停");
+      showToast(running.paused ? t("hero.resumedToast") : t("hero.pausingToast"));
       refreshState();
     } catch (e) { showToast(e.message, "err"); }
   } else if (tracksPath) {
@@ -2487,16 +3048,17 @@ $("#hero-action-btn").onclick = async () => {
 async function refreshState() {
   try {
     const d = await api("/api/state");
+    window._stateReady = true;
     const L = d.library || { total: 0, flac: 0, mp3: 0, ogg: 0 };
     const flacPct = L.total > 0 ? Math.round((L.flac * 100) / L.total) : 0;
     const lossyPct = L.total > 0 ? Math.max(0, 100 - flacPct) : 0;
 
-    $("#sb-lib-total").innerHTML = `<strong>${L.total}</strong> 首曲目`;
+    $("#sb-lib-total").innerHTML = t("sb.tracksCount", { n: L.total });
     $("#sb-lib-sub").textContent = `FLAC ${L.flac} · MP3 ${L.mp3} · OGG ${L.ogg}`;
-    $("#topbar-sub").textContent = `曲库 ${L.total} 首 · FLAC ${L.flac} (${flacPct}%)`;
+    $("#topbar-sub").textContent = t("topbar.sub", { total: L.total, flac: L.flac, pct: flacPct });
     $("#stat-flac-num").textContent = String(L.flac);
     $("#stat-flac-pct").textContent = flacPct + "%";
-    $("#stat-lib-sub").textContent = `MP3 ${L.mp3} · OGG ${L.ogg} · 共 ${L.total} 首`;
+    $("#stat-lib-sub").textContent = t("stat.libSub", { mp3: L.mp3, ogg: L.ogg, total: L.total });
     $("#bar-flac").style.width = flacPct + "%";
     $("#bar-lossy").style.width = lossyPct + "%";
 
@@ -2504,8 +3066,8 @@ async function refreshState() {
     const running = lastJobs.filter((j) => j.status === "running" || j.status === "queued");
     $("#nav-jobs-badge").textContent = running.length > 0 ? String(running.length) : "";
     $("#jobstat").textContent = running.length > 0
-      ? `进行中 ${running.length} · ${TYPE_NAME[running[0].type] || running[0].type}`
-      : "空闲";
+      ? t("jobs.runningCount", { n: running.length, type: trType(running[0].type) })
+      : t("common.idle");
     $("#jobstat").className = "fc-chip fc-tabular" + (running.length > 0 ? " fc-chip--primary" : "");
 
     updateHero(d, running);
@@ -2528,15 +3090,15 @@ async function refreshState() {
 function renderJobs(jobs) {
   const box = $("#joblist");
   if (!jobs.length) {
-    box.innerHTML = `<div class="fc-empty">还没有任务 —— 前往「歌单导入」发起查重与下载</div>`;
+    box.innerHTML = `<div class="fc-empty">${esc(t("jobs.empty"))}</div>`;
     return;
   }
   box.innerHTML = "";
   jobs.forEach((j) => {
     const chipCls = j.status === "running" ? "fc-chip--primary" : j.status === "done" ? "fc-chip--ok" :
                     j.status === "error" ? "fc-chip--error" : "";
-    const st = j.status === "running" ? "进行中" : j.status === "queued" ? "排队中" :
-               j.status === "done" ? "已完成" : "失败";
+    const st = j.status === "running" ? t("jobs.stRunning") : j.status === "queued" ? t("jobs.stQueued") :
+               j.status === "done" ? t("jobs.stDone") : t("jobs.stError");
     const pct = j.total > 0 ? Math.min(100, Math.round((j.progress.done * 100) / j.total)) : 0;
     const btn = document.createElement("button");
     btn.type = "button";
@@ -2544,8 +3106,8 @@ function renderJobs(jobs) {
     btn.dataset.id = j.id;
     btn.innerHTML =
       `<div class="fc-jobcard__top">` +
-      `<span class="fc-jobcard__name">${esc(TYPE_NAME[j.type] || j.type)}</span>` +
-      `<span class="fc-chip ${chipCls}">${st}</span>` +
+      `<span class="fc-jobcard__name">${esc(trType(j.type))}</span>` +
+      `<span class="fc-chip ${chipCls}">${esc(st)}</span>` +
       `<span class="fc-jobcard__time fc-tabular">${esc(j.started_h)}</span>` +
       `<span class="fc-jobcard__sum">${esc(j.summary || "")}</span>` +
       `</div>` +
@@ -2579,7 +3141,7 @@ async function pollJob() {
   try {
     const j = await api("/api/job/" + curId);
     if (curId !== activeJobId) return;
-    $("#joblog-title").textContent = `作业日志 · ${TYPE_NAME[j.type] || j.type}`;
+    $("#joblog-title").textContent = t("jobs.logTitleWith", { type: trType(j.type) });
     if (j.progress && j.progress.total > 0) {
       const pct = Math.min(100, Math.round((j.progress.done * 100) / j.progress.total));
       $("#dlbar").style.width = pct + "%";
@@ -2591,27 +3153,18 @@ async function pollJob() {
     }
     const sc = j.status_counts || {};
     const scEntries = Object.entries(sc);
-    const STATUS_LABEL = {
-      downloaded: "下载成功",
-      already_exists: "已存在跳过",
-      skipped: "手动跳过",
-      low_confidence: "未匹配(低置信度，未下载)",
-      no_result: "未搜到结果",
-      no_source: "无可用音源",
-      search_failed: "搜索失败",
-      failed: "下载失败",
-    };
     if (scEntries.length) {
       const scHtml = scEntries.map(([k, v]) => {
         const cls = /fail|err/i.test(k)
           ? "fc-chip--error"
           : (k === "downloaded" || k === "upgraded" || k === "ok" || k === "pass" ? "fc-chip--ok" : "fc-chip--warn");
-        return `<span class="fc-chip ${cls} fc-tabular">${esc(STATUS_LABEL[k] || k)}：${v}</span>`;
+        const lbl = t(`st.${k}`) !== `st.${k}` ? t(`st.${k}`) : k;
+        return `<span class="fc-chip ${cls} fc-tabular">${esc(lbl)}: ${v}</span>`;
       }).join("");
-      $("#job-stats-row").innerHTML = scHtml + (j.music_dir ? `<span class="fc-chip fc-mono">目标：${esc(j.music_dir)}</span>` : "");
+      $("#job-stats-row").innerHTML = scHtml + (j.music_dir ? `<span class="fc-chip fc-mono">${esc(t("jobs.targetDir", { dir: j.music_dir }))}</span>` : "");
       $("#job-stats-row").hidden = false;
     } else if (j.music_dir) {
-      $("#job-stats-row").innerHTML = `<span class="fc-chip fc-mono">目标：${esc(j.music_dir)}</span>`;
+      $("#job-stats-row").innerHTML = `<span class="fc-chip fc-mono">${esc(t("jobs.targetDir", { dir: j.music_dir }))}</span>`;
       $("#job-stats-row").hidden = false;
     } else {
       $("#job-stats-row").hidden = true;
@@ -2630,10 +3183,10 @@ async function pollJob() {
     $("#btn-pause").hidden = !showCtl;
     $("#btn-skip").hidden = !showCtl;
     if (showCtl) {
-      $("#btn-pause").textContent = j.paused ? "▶ 继续" : "⏸ 暂停";
+      $("#btn-pause").textContent = j.paused ? t("jobs.resume") : t("jobs.pause");
       $("#btn-pause").dataset.paused = j.paused ? "1" : "";
       const txt = j.current && j.current.name
-        ? (j.paused ? "已暂停（当前曲目完成后停下）" : "正在处理：" + j.current.name)
+        ? (j.paused ? t("jobs.pausingNote") : t("jobs.processing", { name: j.current.name }))
         : "";
       $("#cur-track").textContent = txt;
       $("#cur-track").hidden = !txt;
@@ -2646,7 +3199,7 @@ async function pollJob() {
       if (cb) {
         delete onDoneMap[curId];
         if (j.status === "done") cb();
-        else showToast("作业执行失败，请查看日志详情", "err");
+        else showToast(t("jobs.failToast"), "err");
       }
     } else {
       latestPollTimer = setTimeout(pollJob, 1500);
@@ -2664,8 +3217,8 @@ function watchJob(id, onDone) {
 $("#btn-copy-log").onclick = () => {
   const txt = $("#joblog").textContent || "";
   navigator.clipboard?.writeText(txt).then(
-    () => showToast("日志已复制到剪贴板"),
-    () => showToast("复制失败", "err")
+    () => showToast(t("jobs.copyOk")),
+    () => showToast(t("jobs.copyErr"), "err")
   );
 };
 
@@ -2688,42 +3241,43 @@ $("#btn-skip").onclick = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: "{}",
     });
-    showToast("已请求跳过当前曲目");
+    showToast(t("jobs.skipToast"));
   } catch (e) { showToast(e.message, "err"); }
 };
 
 /* ---------- Upgrade & Audit ---------- */
-let upgradeQueueItems = []; // [{ name, tag, checked }]
+let upgradeQueueItems = []; // [{ name, tag, fromAudit, checked }]
 let auditCandidateFiles = [];
 let auditSelectedFiles = new Set();
 
 function renderUpgradeQueue() {
   const kw = ($("#up-queue-filter")?.value || "").toLowerCase();
   const checkedCount = upgradeQueueItems.filter((x) => x.checked).length;
-  $("#up-queue-count").textContent = `${checkedCount} / ${upgradeQueueItems.length} 个文件`;
+  $("#up-queue-count").textContent = t("up.queueCount", { checked: checkedCount, total: upgradeQueueItems.length });
   $("#up-sel-count").textContent = String(checkedCount);
 
   const shown = upgradeQueueItems.filter((x) => !kw || x.name.toLowerCase().includes(kw));
   if (!upgradeQueueItems.length) {
-    $("#up-queue-list").innerHTML = '<div class="fc-empty">待升级清单为空 —— 请在上方选择目录「扫描载入清单」，或从「质量审计」传入不合格文件</div>';
+    $("#up-queue-list").innerHTML = `<div class="fc-empty">${esc(t("up.empty"))}</div>`;
     return;
   }
   if (!shown.length) {
-    $("#up-queue-list").innerHTML = '<div class="fc-hint" style="padding:12px;text-align:center;">没有匹配过滤关键词的待升级文件</div>';
+    $("#up-queue-list").innerHTML = `<div class="fc-hint" style="padding:12px;text-align:center;">${esc(t("up.emptyFilter"))}</div>`;
     return;
   }
-  $("#up-queue-list").innerHTML = shown.map((item) =>
-    `<div class="fc-dir-item" style="justify-content:space-between;">` +
+  $("#up-queue-list").innerHTML = shown.map((item) => {
+    const tagText = item.fromAudit ? t("up.tagAudit") : item.tag;
+    return `<div class="fc-dir-item" style="justify-content:space-between;">` +
       `<label class="fc-row" style="gap:8px;flex:1;min-width:0;cursor:pointer;">` +
         `<input type="checkbox" class="up-q-cb" data-name="${esc(item.name)}" ${item.checked ? "checked" : ""}>` +
         `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(item.name)}">${esc(item.name)}</span>` +
       `</label>` +
       `<div class="fc-row" style="gap:6px;flex:none;">` +
-        `<span class="fc-chip">${esc(item.tag)}</span>` +
-        `<button type="button" class="fc-btn fc-btn--sm fc-btn--tonal up-q-del" data-name="${esc(item.name)}" aria-label="移除 ${esc(item.name)}">×</button>` +
+        `<span class="fc-chip">${esc(tagText)}</span>` +
+        `<button type="button" class="fc-btn fc-btn--sm fc-btn--tonal up-q-del" data-name="${esc(item.name)}" aria-label="Remove ${esc(item.name)}">×</button>` +
       `</div>` +
-    `</div>`
-  ).join("");
+    `</div>`;
+  }).join("");
 }
 
 function setUpgradeExtUI(extVal) {
@@ -2734,13 +3288,13 @@ function setUpgradeExtUI(extVal) {
 }
 
 function sendAuditFilesToUpgrade(names) {
-  if (!names.length) return showToast("没有可传入升级的文件", "err");
+  if (!names.length) return showToast(t("up.toastNoFiles"), "err");
   const seen = new Set();
   upgradeQueueItems = [];
   for (const n of names) {
     if (n && !seen.has(n)) {
       seen.add(n);
-      upgradeQueueItems.push({ name: n, tag: "审计导入", checked: true });
+      upgradeQueueItems.push({ name: n, fromAudit: true, tag: t("up.tagAudit"), checked: true });
     }
   }
   const srcDir = (auditData && auditData.music_dir) || ($("#aud-dir")?.value || "").trim();
@@ -2748,7 +3302,7 @@ function sendAuditFilesToUpgrade(names) {
   setUpgradeExtUI("flac");
   renderUpgradeQueue();
   showTab("upgrade");
-  showToast(`已将 ${upgradeQueueItems.length} 个文件传入待升级清单`, "ok");
+  showToast(t("up.toastSent", { n: upgradeQueueItems.length }), "ok");
 }
 
 $("#up-queue-filter").oninput = renderUpgradeQueue;
@@ -2757,7 +3311,7 @@ $("#up-queue-list").onchange = (e) => {
   const item = upgradeQueueItems.find((x) => x.name === e.target.dataset.name);
   if (item) item.checked = e.target.checked;
   const checkedCount = upgradeQueueItems.filter((x) => x.checked).length;
-  $("#up-queue-count").textContent = `${checkedCount} / ${upgradeQueueItems.length} 个文件`;
+  $("#up-queue-count").textContent = t("up.queueCount", { checked: checkedCount, total: upgradeQueueItems.length });
   $("#up-sel-count").textContent = String(checkedCount);
 };
 $("#up-queue-list").onclick = (e) => {
@@ -2779,7 +3333,7 @@ $("#btn-up-selnone").onclick = () => {
 $("#btn-up-clear-files").onclick = () => {
   upgradeQueueItems = [];
   renderUpgradeQueue();
-  showToast("已清空待升级清单");
+  showToast(t("up.toastCleared"));
 };
 async function scanUpgradeFiles(silent = false) {
   try {
@@ -2795,7 +3349,7 @@ async function scanUpgradeFiles(silent = false) {
     }));
     renderUpgradeQueue();
     if (!silent) {
-      showToast(`已载入 ${upgradeQueueItems.length} 个待升级文件`, upgradeQueueItems.length ? "ok" : "");
+      showToast(t("up.toastLoaded", { n: upgradeQueueItems.length }), upgradeQueueItems.length ? "ok" : "");
     }
   } catch (e) { showToast(e.message, "err"); }
 }
@@ -2814,11 +3368,11 @@ $("#btn-aud-send-all").onclick = () => {
 function renderAuditPickList() {
   const kw = ($("#aud-pick-filter").value || "").toLowerCase();
   const shown = auditCandidateFiles.filter((f) => !kw || f.toLowerCase().includes(kw));
-  $("#aud-pick-summary").textContent = `已选 ${auditSelectedFiles.size} / ${auditCandidateFiles.length} 个文件`;
+  $("#aud-pick-summary").textContent = t("aud.pickSummary", { sel: auditSelectedFiles.size, total: auditCandidateFiles.length });
   $("#aud-pick-list").innerHTML = shown.map((name) => {
     const chk = auditSelectedFiles.has(name) ? "checked" : "";
     return `<label class="fc-dir-item"><input type="checkbox" class="aud-pick-cb" data-name="${esc(name)}" ${chk}> <span>${esc(name)}</span></label>`;
-  }).join("") || '<div class="fc-hint" style="padding:10px;text-align:center;">目录下没有匹配的 .flac 文件</div>';
+  }).join("") || `<div class="fc-hint" style="padding:10px;text-align:center;">${esc(t("aud.pickEmpty"))}</div>`;
 }
 
 $("#btn-aud-load-files").onclick = async () => {
@@ -2840,7 +3394,7 @@ $("#aud-pick-list").onchange = (e) => {
   const nm = e.target.dataset.name;
   if (e.target.checked) auditSelectedFiles.add(nm);
   else auditSelectedFiles.delete(nm);
-  $("#aud-pick-summary").textContent = `已选 ${auditSelectedFiles.size} / ${auditCandidateFiles.length} 个文件`;
+  $("#aud-pick-summary").textContent = t("aud.pickSummary", { sel: auditSelectedFiles.size, total: auditCandidateFiles.length });
 };
 $("#btn-aud-pick-all").onclick = () => {
   const kw = ($("#aud-pick-filter").value || "").toLowerCase();
@@ -2861,7 +3415,7 @@ document.querySelectorAll("#up-ext-seg .fc-segmented__btn").forEach((b) => {
 
 $("#btn-up").onclick = async () => {
   const picked = upgradeQueueItems.filter((x) => x.checked).map((x) => x.name);
-  if (!picked.length) return showToast("请先扫描载入或从质量审计传入待升级文件", "err");
+  if (!picked.length) return showToast(t("up.toastNeedFiles"), "err");
   try {
     const extVal = $("#up-ext").value;
     const dir = ($("#up-dir")?.value || "").trim();
@@ -2894,7 +3448,7 @@ $("#btn-audit").onclick = async () => {
       const full = await api("/api/job/" + j.id);
       if (full.audit) showAudit({ ...full.audit, when: full.started_h });
       showTab("audit");
-      showToast("曲库质量审计完成");
+      showToast(t("aud.toastDone"));
     });
     showTab("jobs");
   } catch (e) { showToast(e.message, "err"); }
@@ -2914,7 +3468,7 @@ function renderDedupeGroups() {
   const kw = ($("#ded-filter")?.value || "").toLowerCase();
   $("#ded-sel-count").textContent = String(dedupeSelected.size);
   if (!dedupeGroups.length) {
-    $("#ded-groups").innerHTML = '<div class="fc-empty">未发现疑似重复的曲目分组（或尚未扫描）</div>';
+    $("#ded-groups").innerHTML = `<div class="fc-empty">${esc(t("ded.noGroups"))}</div>`;
     return;
   }
   const shown = dedupeGroups.filter((g) => {
@@ -2923,7 +3477,7 @@ function renderDedupeGroups() {
     return hay.includes(kw);
   });
   if (!shown.length) {
-    $("#ded-groups").innerHTML = '<div class="fc-hint" style="padding:12px;text-align:center;">没有匹配过滤关键词的重复分组</div>';
+    $("#ded-groups").innerHTML = `<div class="fc-hint" style="padding:12px;text-align:center;">${esc(t("ded.noMatch"))}</div>`;
     return;
   }
   $("#ded-groups").innerHTML = shown.map((g, gi) => {
@@ -2945,10 +3499,10 @@ function renderDedupeGroups() {
     }).join("");
     return `<div class="fc-block" style="margin-bottom:10px;padding:10px 12px;">` +
       `<div class="fc-row" style="justify-content:space-between;margin-bottom:8px;">` +
-        `<strong style="font-size:13px;">#${gi + 1} · ${esc(g.title_key || "未知标题")} — ${esc(g.artist_key || "未知艺人")}</strong>` +
+        `<strong style="font-size:13px;">#${gi + 1} · ${esc(g.title_key || t("ded.unknownTitle"))} — ${esc(g.artist_key || t("ded.unknownArtist"))}</strong>` +
         `<div class="fc-row" style="gap:6px;">` +
-          (g.reason ? `<span class="fc-chip">${esc(g.reason)}</span>` : "") +
-          `<span class="fc-chip fc-tabular">${(g.members || []).length} 个文件</span>` +
+          (g.reason ? `<span class="fc-chip">${esc(trDedupeReason(g.reason))}</span>` : "") +
+          `<span class="fc-chip fc-tabular">${esc(t("ded.fileCount", { n: (g.members || []).length }))}</span>` +
         `</div>` +
       `</div>` +
       rows +
@@ -2959,7 +3513,7 @@ function renderDedupeGroups() {
 async function scanDedupe() {
   try {
     $("#btn-ded-scan").disabled = true;
-    $("#ded-summary").textContent = "扫描中…";
+    $("#ded-summary").textContent = t("ded.scanning");
     const dir = ($("#ded-dir")?.value || "").trim();
     const q = dir ? `?dir=${encodeURIComponent(dir)}` : "";
     const res = await api("/api/dedupe" + q);
@@ -2967,11 +3521,11 @@ async function scanDedupe() {
     if (res.music_dir && $("#ded-dir") && !dir) $("#ded-dir").value = res.music_dir;
     dedupeGroups = res.groups || [];
     dedupeSelected.clear();
-    $("#ded-summary").textContent = `${res.total_groups || 0} 组 · ${res.total_files || 0} 个文件`;
+    $("#ded-summary").textContent = t("ded.summary", { groups: res.total_groups || 0, files: res.total_files || 0 });
     renderDedupeGroups();
-    showToast(dedupeGroups.length ? `发现 ${dedupeGroups.length} 组疑似重复` : "未发现重复曲目", dedupeGroups.length ? "" : "ok");
+    showToast(dedupeGroups.length ? t("ded.toastFound", { n: dedupeGroups.length }) : t("ded.toastNone"), dedupeGroups.length ? "" : "ok");
   } catch (e) {
-    $("#ded-summary").textContent = "扫描失败";
+    $("#ded-summary").textContent = t("ded.scanFail");
     showToast(e.message, "err");
   } finally {
     $("#btn-ded-scan").disabled = false;
@@ -3004,7 +3558,7 @@ $("#btn-ded-auto").onclick = () => {
     }
   }
   renderDedupeGroups();
-  showToast(`已按「FLAC / 高码率 / 大文件优先」勾选 ${dedupeSelected.size} 个副本，请核对后操作`);
+  showToast(t("ded.toastAutoSel", { n: dedupeSelected.size }));
 };
 $("#btn-ded-none").onclick = () => {
   dedupeSelected.clear();
@@ -3012,20 +3566,21 @@ $("#btn-ded-none").onclick = () => {
 };
 $("#btn-ded-del").onclick = async () => {
   const files = [...dedupeSelected];
-  if (!files.length) return showToast("请先勾选要清理的副本文件", "err");
-  if (!confirm(`确认将选中的 ${files.length} 个重复文件移入回收站（staging/dedupe_trash）？`)) return;
+  if (!files.length) return showToast(t("ded.toastNeedSel"), "err");
+  if (!confirm(t("ded.confirmDel", { n: files.length }))) return;
   try {
     const res = await api("/api/dedupe/delete", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ music_dir: dedupeMusicDir || ($("#ded-dir")?.value || "").trim(), files }),
     });
-    showToast(`已移入回收站 ${(res.moved || []).length} 个文件`, "ok");
+    showToast(t("ded.toastMoved", { n: (res.moved || []).length }), "ok");
     await scanDedupe();
     refreshState();
   } catch (e) { showToast(e.message, "err"); }
 };
 
 applyTheme();
+applyLang(currentLang, false);
 refreshState();
 setInterval(refreshState, 2500);
 </script>
