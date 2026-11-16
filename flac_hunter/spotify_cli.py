@@ -88,13 +88,40 @@ def parse_qq_jsonp(text):
     return json.loads(s)
 
 
+def _parse_qq_response(raw: bytes):
+    """解析 QQ 歌单响应字节，返回 cdlist[0].songlist（可能为空列表）。
+
+    实测 QQ 不同缓存节点返回不同编码：纯 UTF-8、纯 GBK、混合（UTF-8 骨架
+    + GBK 用户字段）都出现过——任何固定顺序都会踩中某一种。因此三个解码
+    器都试，要求 JSON 可解析且 songlist 非空，按解码文本中 U+FFFD（替换符）
+    最少者胜出：GBK 字节在 UTF-8 replace 下会大量变 �，而正确的编码几乎
+    不产生替换符。
+    """
+    decoders = (
+        lambda: raw.decode("utf-8"),
+        lambda: raw.decode("utf-8", errors="replace"),
+        lambda: raw.decode("gb18030", errors="replace"),
+    )
+    best = None  # (fffd 数, songlist)
+    for decode in decoders:
+        try:
+            text = decode()
+            qq = parse_qq_jsonp(text)
+            songs = (qq.get("cdlist") or [{}])[0].get("songlist") or []
+            if not songs:
+                continue
+            fffd = text.count("\ufffd")
+            if best is None or fffd < best[0]:
+                best = (fffd, songs)
+            if fffd == 0:
+                return songs  # 无替换符 = 无损解码，直接采用
+        except Exception:
+            continue
+    return best[1] if best else []
+
+
 def fetch_qq_playlist(disstid):
     """匿名拉取 QQ 歌单，返回 cdlist[0].songlist 列表（唯一发起网络请求的函数，离线时绝不调用）。"""
     url = f"{QQ_FCG_URL}?type=1&disstid={disstid}&format=json"
     raw = http_get(url, ua=QQ_UA, referer="https://y.qq.com/")  # util.http_get 返回 bytes
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        text = raw.decode("gb18030", errors="replace")
-    qq = parse_qq_jsonp(text)
-    return (qq.get("cdlist") or [{}])[0].get("songlist") or []
+    return _parse_qq_response(raw)
