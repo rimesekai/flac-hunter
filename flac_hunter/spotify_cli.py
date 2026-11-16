@@ -92,5 +92,9 @@ def fetch_qq_playlist(disstid):
     """匿名拉取 QQ 歌单，返回 cdlist[0].songlist 列表（唯一发起网络请求的函数，离线时绝不调用）。"""
     url = f"{QQ_FCG_URL}?type=1&disstid={disstid}&format=json"
     raw = http_get(url, ua=QQ_UA, referer="https://y.qq.com/")  # util.http_get 返回 bytes
-    qq = parse_qq_jsonp(raw.decode("utf-8", errors="replace"))
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("gb18030", errors="replace")
+    qq = parse_qq_jsonp(text)
     return (qq.get("cdlist") or [{}])[0].get("songlist") or []

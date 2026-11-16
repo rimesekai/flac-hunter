@@ -140,6 +140,9 @@ def _list_track_map(line: str, pos: int):
     if " - " in raw:
         name, _, artist = raw.rpartition(" - ")
         name, artist = name.strip(), artist.strip()
+    elif "-" in raw and (re.search(r"[^\x00-\x7f]", raw) or " " in raw):
+        name, _, artist = raw.rpartition("-")
+        name, artist = name.strip(), artist.strip()
     else:
         name, artist = raw, ""
     artists = [a.strip() for a in re.split(r" _ |[,，/、&]", artist) if a.strip()] if artist else []
@@ -154,8 +157,33 @@ def _list_track_map(line: str, pos: int):
     }
 
 
+_SHORT_URL_HOSTS = {"c6.y.qq.com", "b23.tv", "163cn.tv", "163cn.link"}
+
+
+def _resolve_short_url(uri: str) -> str:
+    """展开 QQ音乐/网易云/B站 分享短链（如 c6.y.qq.com/base/fcgi-bin/u?__=...）。"""
+    import urllib.parse
+    import urllib.request
+
+    parsed = urllib.parse.urlparse(uri)
+    host = (parsed.hostname or "").lower()
+    if host not in _SHORT_URL_HOSTS and "/base/fcgi-bin/u" not in parsed.path:
+        return uri
+    try:
+        req = urllib.request.Request(uri, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            final_url = resp.geturl()
+            if final_url and final_url != uri:
+                _log(f"短链已展开: {final_url}")
+                return final_url
+    except Exception as exc:  # noqa: BLE001
+        _log(f"短链展开失败，按原链接继续: {exc}")
+    return uri
+
+
 def _http_playlist_route(uri: str):
     """平台歌单 URL -> (kind, tracks)：已知平台走直连快路，其余交给 musicdl 兜底。"""
+    uri = _resolve_short_url(uri)
     m = re.search(r"music\.163\.com.*?id=(\d+)", uri)
     if m:
         from flac_hunter.sources.netease import fetch_playlist
@@ -171,6 +199,13 @@ def _http_playlist_route(uri: str):
         tracks = [_qq_track_map(s, pos) for pos, s in enumerate(songlist, 1)]
         _log(f"qq playlist (URL 自动路由): fetched={len(tracks)}")
         return "qq", tracks
+    m = re.search(r"bilibili\.com/.*?[?&]fid=(\d+)", uri) or re.search(r"bilibili\.com/medialist/detail/ml(\d+)", uri)
+    if m:
+        from flac_hunter.sources.bilibili import fetch_fav_tracks
+
+        tracks = [dict(t, position=i) for i, t in enumerate(fetch_fav_tracks(m.group(1)), 1)]
+        _log(f"bili fav (URL 自动路由): fetched={len(tracks)}")
+        return "bili", tracks
     from flac_hunter.sources import musicdl_ext
 
     if not musicdl_ext.AVAILABLE:
@@ -192,6 +227,8 @@ def cmd_prepare(args):
     from flac_hunter.match.normalize import sanitize
 
     cfg = load_config()
+    if getattr(args, "music_dir", None):
+        cfg.paths.music = str(Path(args.music_dir).expanduser())
     uri = args.uri
     tracks = []
     kind = None
@@ -337,6 +374,8 @@ def cmd_download(args):
     from flac_hunter.pipeline import run_download
 
     cfg = load_config()
+    if getattr(args, "music_dir", None):
+        cfg.paths.music = str(Path(args.music_dir).expanduser())
     tracks = json.loads(Path(args.tracks).read_text(encoding="utf-8"))
     only_ids = None
     if args.only:
@@ -348,6 +387,8 @@ def cmd_download(args):
         only_ids=only_ids,
         limit=args.limit,
         include_existing=args.include_existing,
+        download_cover=not getattr(args, "no_cover", False),
+        download_lyrics=not getattr(args, "no_lyrics", False),
     )
     if isinstance(res, (list, tuple)):
         stat = {}
@@ -365,7 +406,14 @@ def cmd_upgrade(args):
     from flac_hunter.upgrade import run_upgrade
 
     cfg = load_config()
-    run_upgrade(cfg, ext=args.ext, full_retry=args.full_retry, limit=args.limit)
+    if getattr(args, "music_dir", None):
+        cfg.paths.music = str(Path(args.music_dir).expanduser())
+    only_files = None
+    if getattr(args, "files", None):
+        raw = json.loads(Path(args.files).read_text(encoding="utf-8"))
+        if isinstance(raw, list):
+            only_files = [str(x) for x in raw if str(x).strip()]
+    run_upgrade(cfg, ext=args.ext, full_retry=args.full_retry, limit=args.limit, only_files=only_files)
     _log("upgrade 完成")
 
 
@@ -615,6 +663,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--list", dest="list_file", default=None,
         help="文本清单（每行 '歌名 - 歌手[ | 时长秒]'，任意平台导出的兜底入口）")
     p.add_argument("--out", default="tasks/tracks.json", help="输出路径")
+    p.add_argument("--music-dir", default=None, help="自定义查重曲库目录（覆盖 config.toml 的 paths.music）")
     p.set_defaults(func=cmd_prepare)
 
     p = sub.add_parser("download", help="按 tracks.json 编排下载")
@@ -628,12 +677,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--only", default=None, help="仅处理指定 id（逗号分隔）")
     p.add_argument("--limit", type=int, default=None, help="最多处理 N 条")
     p.add_argument("--include-existing", action="store_true", help="包含查重命中的曲目")
+    p.add_argument("--no-cover", action="store_true", help="不下载并内嵌专辑封面（.jpg）")
+    p.add_argument("--no-lyrics", action="store_true", help="不下载歌词文件（.lrc）")
+    p.add_argument("--music-dir", default=None, help="自定义下载保存目录（覆盖 config.toml 的 paths.music）")
     p.set_defaults(func=cmd_download)
 
     p = sub.add_parser("upgrade", help="旧文件无损升级")
     p.add_argument("--ext", default="mp3", choices=["mp3", "ogg", "all"], help="目标扩展名")
     p.add_argument("--full-retry", action="store_true", help="清空 match_fails.json 跳名单重试")
     p.add_argument("--limit", type=int, default=None, help="最多处理 N 个文件")
+    p.add_argument("--files", default=None, help="指定待升级文件名列表 JSON 路径")
+    p.add_argument("--music-dir", default=None, help="自定义曲库目录（覆盖 config.toml 的 paths.music）")
     p.set_defaults(func=cmd_upgrade)
 
     p = sub.add_parser("audit", help="四项质量门扫全库 .flac")

@@ -502,12 +502,29 @@ def _download_and_convert(track, cand, src, cfg, dirs, cover_path) -> tuple:
 
 # ---------- sidecar ----------
 
-def _fetch_cover(track, staging: Path) -> Path | None:
-    """Spotify 封面下载（蓝本 download.py:195-211）：ab67616d[0-9a-f]{8}→ab67616d0000b273
-    取大图，>5000 字节才收。仅 sidecars=True 时调用。失败返回 None。"""
+def _netease_cover_url(sid: str) -> str | None:
+    """当歌单条目缺少 image_url 时，按网易云歌曲 id 查询专辑封面 URL。"""
+    from .util import http_get
+
+    try:
+        raw = http_get(f"https://music.163.com/api/song/detail/?id={sid}&ids=%5B{sid}%5D", timeout=10)
+        songs = json.loads(raw.decode("utf-8", errors="replace")).get("songs") or []
+        pic = ((songs[0].get("album") or {}).get("picUrl") or "") if songs else ""
+        return pic or None
+    except Exception:
+        return None
+
+
+def _fetch_cover(track, staging: Path, cand: dict | None = None) -> Path | None:
+    """封面下载（Spotify 大图升级，或从网易云/GDStudio 候选 id 补拉专辑封面）。"""
     from .util import http_get
 
     url = track.get("image_url")
+    if not url and isinstance(cand, dict):
+        cid = str(cand.get("id") or "")
+        src_n = str(cand.get("source") or "")
+        if cid and cid.isdigit() and src_n in ("netease", "gdstudio"):
+            url = _netease_cover_url(cid)
     if not url:
         return None
     raw_id = str(track.get("uri") or "cover").split(":")[-1]
@@ -586,7 +603,9 @@ def _place_file(new: Path, target: Path, backup_dir: Path) -> None:
 
 # ---------- 单曲处理 ----------
 
-def _manual_bvid_rec(track, bvid, bili_src, cfg, dirs, sidecars, lyrics_fetcher) -> dict:
+def _manual_bvid_rec(track, bvid, bili_src, cfg, dirs, sidecars, lyrics_fetcher,
+                     download_cover: bool | None = None,
+                     download_lyrics: bool | None = None) -> dict:
     """收藏夹钦点视频直下（yt-dlp bestaudio → 转码/验证/落位/侧车）。
 
     收藏的是用户亲手挑选的具体投稿（翻唱/现场等），平台官方版本不能顶替——
@@ -605,10 +624,12 @@ def _manual_bvid_rec(track, bvid, bili_src, cfg, dirs, sidecars, lyrics_fetcher)
            "source": "bili-manual", "path": None,
            "dedupe_reason": str(track.get("dedupe_reason") or "")}
     stem = _filename_stem(track)
+    want_cover = sidecars if download_cover is None else bool(download_cover)
+    want_lyrics = sidecars if download_lyrics is None else bool(download_lyrics)
     cover_path = None
     try:
-        if sidecars and track.get("image_url"):
-            cover_path = _fetch_cover(track, Path(dirs["staging"]))
+        if want_cover and (track.get("image_url") or cand.get("id")):
+            cover_path = _fetch_cover(track, Path(dirs["staging"]), cand=cand)
         out, err, final_ext = _download_and_convert(track, cand, bili_src, cfg, dirs, cover_path)
         if out is None:
             rec["status"] = STATUS_FAILED
@@ -623,13 +644,13 @@ def _manual_bvid_rec(track, bvid, bili_src, cfg, dirs, sidecars, lyrics_fetcher)
             rec["error"] = f"落位失败: {str(e)[:200]}"
             return rec
         jpg_done = lrc_done = False
-        if sidecars:
-            if cover_path is not None and cover_path.exists():
-                try:
-                    (Path(dirs["music"]) / f"{stem}.jpg").write_bytes(cover_path.read_bytes())
-                    jpg_done = True
-                except Exception:
-                    pass
+        if want_cover and cover_path is not None and cover_path.exists():
+            try:
+                (Path(dirs["music"]) / f"{stem}.jpg").write_bytes(cover_path.read_bytes())
+                jpg_done = True
+            except Exception:
+                pass
+        if want_lyrics:
             lrc_text = _fetch_lyrics(track, _alt_titles(track, cfg), lyrics_fetcher,
                                      track_duration_s(track), cfg=cfg)
             if lrc_text:
@@ -647,7 +668,9 @@ def _manual_bvid_rec(track, bvid, bili_src, cfg, dirs, sidecars, lyrics_fetcher)
 
 
 def _process_track(track, cfg, srcs, done_uris, all_variants, virt, alias_groups,
-                   include_existing, sidecars, lyrics_fetcher, dirs, gd_resolver) -> dict:
+                   include_existing, sidecars, lyrics_fetcher, dirs, gd_resolver,
+                   download_cover: bool | None = None,
+                   download_lyrics: bool | None = None) -> dict:
     """处理单条 track，返回结果记录（不落盘）。"""
     uri = str(track.get("uri") or "")
     rec = {"uri": uri, "track": track, "score": None, "source": None, "path": None,
@@ -680,7 +703,9 @@ def _process_track(track, cfg, srcs, done_uris, all_variants, virt, alias_groups
         bili_src = next((s for s in srcs if _source_name(s) == "bili"), None)
         if bili_src is not None:
             return _manual_bvid_rec(track, bvid, bili_src, cfg, dirs,
-                                    sidecars, lyrics_fetcher)
+                                    sidecars, lyrics_fetcher,
+                                    download_cover=download_cover,
+                                    download_lyrics=download_lyrics)
 
     # 候选循环
     alts = _alt_titles(track, cfg)
@@ -749,11 +774,13 @@ def _process_track(track, cfg, srcs, done_uris, all_variants, virt, alias_groups
     rec["score"] = sc
     stem = _filename_stem(track)
 
-    # sidecar 封面（转换内嵌用；仅 sidecars=True 时下载，finally 确保清理暂存）
+    # sidecar 封面（转换内嵌用；仅 want_cover=True 时下载，finally 确保清理暂存）
+    want_cover = sidecars if download_cover is None else bool(download_cover)
+    want_lyrics = sidecars if download_lyrics is None else bool(download_lyrics)
     cover_path = None
     try:
-        if sidecars and track.get("image_url"):
-            cover_path = _fetch_cover(track, Path(dirs["staging"]))
+        if want_cover and (track.get("image_url") or cand.get("id")):
+            cover_path = _fetch_cover(track, Path(dirs["staging"]), cand=cand)
 
         out, err, final_ext = _download_and_convert(track, cand, src, cfg, dirs, cover_path)
         if out is None:
@@ -771,15 +798,15 @@ def _process_track(track, cfg, srcs, done_uris, all_variants, virt, alias_groups
             rec["error"] = f"落位失败: {str(e)[:200]}"
             return rec
 
-        # sidecar：.jpg + .lrc（蓝本 download.py:195-246；仅 sidecars=True）
+        # sidecar：.jpg + .lrc（按 want_cover / want_lyrics 独立控制）
         jpg_done = lrc_done = False
-        if sidecars:
-            if cover_path is not None and cover_path.exists():
-                try:
-                    (Path(dirs["music"]) / f"{stem}.jpg").write_bytes(cover_path.read_bytes())
-                    jpg_done = True
-                except Exception:
-                    pass
+        if want_cover and cover_path is not None and cover_path.exists():
+            try:
+                (Path(dirs["music"]) / f"{stem}.jpg").write_bytes(cover_path.read_bytes())
+                jpg_done = True
+            except Exception:
+                pass
+        if want_lyrics:
             lrc_text = _fetch_lyrics(track, alts, lyrics_fetcher, track_duration_s(track), cfg=cfg)
             if lrc_text:
                 try:
@@ -804,6 +831,7 @@ def _process_track(track, cfg, srcs, done_uris, all_variants, virt, alias_groups
 
 def run_download(tracks, cfg, *, source: str = "auto", only_ids=None, limit=None,
                  include_existing: bool = False, sources=None, sidecars: bool = True,
+                 download_cover: bool | None = None, download_lyrics: bool | None = None,
                  lyrics_fetcher=None, tasks_dir: str | Path | None = None) -> list:
     """下载编排入口：返回逐曲结果记录列表（并逐曲追加到 tasks/results.jsonl）。
 
@@ -855,7 +883,9 @@ def run_download(tracks, cfg, *, source: str = "auto", only_ids=None, limit=None
     for track in sel:
         rec = _process_track(track, cfg, srcs or [], done_uris, all_variants, virt,
                              alias_groups, include_existing, sidecars, lyrics_fetcher,
-                             dirs, gd_resolver)
+                             dirs, gd_resolver,
+                             download_cover=download_cover,
+                             download_lyrics=download_lyrics)
         results.append(rec)
         _append_result(tasks, rec)
         if scale > 0:

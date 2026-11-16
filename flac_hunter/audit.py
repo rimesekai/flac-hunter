@@ -326,8 +326,12 @@ def audit_one(path: str | Path, duration_ms=None, *, dur_tol: float = DUR_TOL) -
     if not tags_ok:
         issues.append("缺标签")
 
-    # ③ 同名封面
-    jpg_ok = os.path.isfile(os.path.splitext(p)[0] + ".jpg")
+    # ③ 同名侧车 .jpg 或 FLAC 内嵌封面流
+    has_embedded_pic = any(
+        (s.get("codec_type") == "video") or bool((s.get("disposition") or {}).get("attached_pic"))
+        for s in streams
+    )
+    jpg_ok = os.path.isfile(os.path.splitext(p)[0] + ".jpg") or has_embedded_pic
     if not jpg_ok:
         issues.append("缺封面")
 

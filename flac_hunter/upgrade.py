@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import random
 import re
@@ -217,6 +218,27 @@ def _tag_get(tags, key: str):
     return None
 
 
+def _fetch_netease_cover(sid: str, dst: Path) -> bool:
+    """从网易云歌曲详情补拉专辑封面到 dst（仅真实网络升级时调用，失败静默返回 False）。"""
+    from .util import http_get
+
+    try:
+        detail_url = f"https://music.163.com/api/song/detail/?id={sid}&ids=%5B{sid}%5D"
+        raw = http_get(detail_url, timeout=12)
+        songs = (json.loads(raw.decode("utf-8", errors="replace")).get("songs") or [])
+        pic_url = ((songs[0].get("album") or {}).get("picUrl") or "") if songs else ""
+        if not pic_url:
+            return False
+        img = http_get(pic_url, timeout=20)
+        if len(img) > 1000 and img[:1] != b"<":
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(img)
+            return True
+    except Exception:
+        return False
+    return False
+
+
 def _remux_flac(src: Path, out: Path, title: str, artist: str, cover: Path | None) -> tuple[bool, str]:
     """remux 成 FLAC（-c copy + 标签 + 可选内嵌封面，显式 -f flac）。
 
@@ -229,6 +251,27 @@ def _remux_flac(src: Path, out: Path, title: str, artist: str, cover: Path | Non
         return True, ""
     except Exception as e:
         return False, str(e)[:300]
+
+
+def _repair_existing_flac(p: Path, music_dir: Path, stem: str, title: str,
+                          artist: str, sid: str | None, search_fn) -> tuple[bool, str]:
+    """当输入本身已是 .flac 且无损源未拉到时，尝试就地补封面与标签。"""
+    cover = music_dir / f"{stem}.jpg"
+    if not cover.exists() and search_fn is None and sid:
+        _fetch_netease_cover(sid, cover)
+    if not cover.exists():
+        return False, "no_cover"
+    tmp_final = music_dir / f"{stem}.new.flac"
+    ok, err = _remux_flac(p, tmp_final, title, artist, cover)
+    if not ok:
+        tmp_final.unlink(missing_ok=True)
+        return False, err
+    try:
+        os.replace(str(tmp_final), str(p))
+        return True, ""
+    except Exception as e:
+        tmp_final.unlink(missing_ok=True)
+        return False, str(e)[:200]
 
 
 # ---------- 主流程 ----------
@@ -274,6 +317,7 @@ def _queries_for(title: str, artist: str) -> list[str]:
 
 def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
                 limit: int | None = None,
+                only_files: list[str] | None = None,
                 match_fails_path: str | Path | None = None,
                 search_fn=None, url_fn=None, download_fn=None) -> list[dict]:
     """扫描曲库该扩展名旧文件并逐个尝试无损升级，返回逐文件结果记录列表。
@@ -312,8 +356,12 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
     )
 
     skip = _load_match_fails(full_retry, fails_path)
-    files = sorted(f for f in os.listdir(music_dir)
-                   if f.lower().endswith(exts))
+    if only_files is not None:
+        wanted_names = {Path(str(x)).name for x in only_files if str(x).strip()}
+        files = sorted(f for f in os.listdir(music_dir) if f in wanted_names)
+    else:
+        files = sorted(f for f in os.listdir(music_dir)
+                       if f.lower().endswith(exts))
     results: list[dict] = []
     upgraded = 0
     for idx, fname in enumerate(files, 1):
@@ -391,10 +439,21 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
             results.append(rec)
             continue
 
+        is_flac_input = p.suffix.lower() == ".flac"
+
         # GDStudio get_url 阶梯
         url_res = _get_url(sid)
         url, src_br_tag = url_res[0], int(url_res[1] or 0)
         if not url:
+            if is_flac_input:
+                repaired, rep_err = _repair_existing_flac(p, music_dir, stem, title, artist, sid, search_fn)
+                if repaired:
+                    rec["status"] = "upgraded"
+                    rec["final"] = p.name
+                    rec["src_ext"] = ".flac"
+                    upgraded += 1
+                    results.append(rec)
+                    continue
             rec["status"] = "no_url"
             results.append(rec)
             continue
@@ -407,8 +466,17 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
             and src_br_tag >= 999000
         )
 
-        # mp3 输入：仅声称无损（.flac 后缀或 br>=999000）才下载进入实测确认
+        # mp3/flac 输入：仅声称无损（.flac 后缀或 br>=999000）才下载进入实测确认
         if not is_ogg_input and not claims_lossless:
+            if is_flac_input:
+                repaired, rep_err = _repair_existing_flac(p, music_dir, stem, title, artist, sid, search_fn)
+                if repaired:
+                    rec["status"] = "upgraded"
+                    rec["final"] = p.name
+                    rec["src_ext"] = ".flac"
+                    upgraded += 1
+                    results.append(rec)
+                    continue
             rec["status"] = "not_lossless"
             rec["src_ext"] = raw_ext
             rec["src_br"] = src_br_tag
@@ -484,6 +552,8 @@ def run_upgrade(cfg, *, ext: str = "mp3", full_retry: bool = False,
             final = music_dir / f"{stem}.flac"
             tmp_final = music_dir / f"{stem}.new.flac"
             cover = music_dir / f"{stem}.jpg"
+            if not cover.exists() and search_fn is None and sid:
+                _fetch_netease_cover(sid, cover)
             ok, err = _remux_flac(tmp, tmp_final, title, artist,
                                   cover if cover.exists() else None)
             if not ok:

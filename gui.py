@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -21,6 +22,7 @@ import webbrowser
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -51,7 +53,9 @@ class Job:
     def __init__(self, jid: str, jtype: str, cmd: list | None, cwd: Path,
                  total: int = 0, tracks_path: str | None = None,
                  tracks_list: list | None = None, source: str = "auto",
-                 include_existing: bool = False):
+                 include_existing: bool = False, music_dir: str = "",
+                 audit_files: list[str] | None = None,
+                 download_cover: bool = True, download_lyrics: bool = True):
         self.id = jid
         self.type = jtype
         self.cmd = cmd
@@ -61,6 +65,10 @@ class Job:
         self.tracks_list = tracks_list          # 下载逐曲模式的目标曲目列表
         self.source = source
         self.include_existing = include_existing
+        self.music_dir = music_dir              # 本次下载/审计自定义目录（空则沿用 config.toml）
+        self.audit_files = audit_files          # 质量审计选定文件列表（None 表示全库）
+        self.download_cover = download_cover
+        self.download_lyrics = download_lyrics
         self.status = "queued"
         self.exit_code: int | None = None
         self.started = time.time()
@@ -87,6 +95,8 @@ class Job:
             "summary": self.summary, "total": self.total,
             "progress": {"done": self.done, "total": self.total},
             "tracks_path": self.tracks_path,
+            "music_dir": self.music_dir,
+            "status_counts": dict(self.status_counts),
             "audit": self.audit,
             "paused": self.paused, "current": self.current,
         }
@@ -135,11 +145,15 @@ class Runner:
 
     def submit(self, jtype: str, cmd: list | None, total: int = 0,
                tracks_path: str | None = None, tracks_list: list | None = None,
-               source: str = "auto", include_existing: bool = False) -> dict:
+               source: str = "auto", include_existing: bool = False,
+               music_dir: str = "", audit_files: list[str] | None = None,
+               download_cover: bool = True, download_lyrics: bool = True) -> dict:
         jid = uuid.uuid4().hex[:10]
         job = Job(jid, jtype, cmd, REPO, total=total, tracks_path=tracks_path,
                   tracks_list=tracks_list, source=source,
-                  include_existing=include_existing)
+                  include_existing=include_existing, music_dir=music_dir,
+                  audit_files=audit_files,
+                  download_cover=download_cover, download_lyrics=download_lyrics)
         with self.lock:
             self.jobs[jid] = job
             self.order.append(jid)
@@ -160,10 +174,12 @@ class Runner:
             try:
                 if job.type == "audit":
                     self._run_audit(job)
-                    job.exit_code = 0
+                    if job.exit_code is None:
+                        job.exit_code = 0
                 elif job.type == "download" and job.tracks_list is not None:
                     self._run_download_pertrack(job)
-                    job.exit_code = 0
+                    if job.exit_code is None:
+                        job.exit_code = 0
                 else:
                     self._run_subproc(job)
                 job.status = "done" if job.exit_code == 0 else "error"
@@ -206,6 +222,12 @@ class Runner:
                "--source", job.source, "--only", only_key]
         if job.include_existing:
             cmd.append("--include-existing")
+        if not job.download_cover:
+            cmd.append("--no-cover")
+        if not job.download_lyrics:
+            cmd.append("--no-lyrics")
+        if job.music_dir:
+            cmd.extend(["--music-dir", job.music_dir])
         return cmd
 
     def _append_ledger(self, job: Job, track: dict, status: str) -> None:
@@ -261,7 +283,7 @@ class Runner:
             killed = False
             for raw in iter(proc.stdout.readline, b""):
                 if job.skip_requested:
-                    proc.kill()
+                    _kill_proc_tree(proc)
                     killed = True
                     break
                 line = raw.decode("utf-8", "replace").rstrip("\r\n")
@@ -283,12 +305,22 @@ class Runner:
         from flac_hunter.audit import audit_one
 
         cfg = self.cfg
-        music = Path(cfg.paths.music)
+        music = Path(job.music_dir or cfg.paths.music)
         if not music.is_dir():
             job.log.append(f"[audit] 曲库目录不存在: {music}")
             job.exit_code = 1
             return
-        files = sorted(music.glob("*.flac"))
+        if job.audit_files is not None:
+            wanted = []
+            seen = set()
+            for raw in job.audit_files:
+                nm = Path(str(raw)).name
+                if nm and nm not in seen and (music / nm).is_file():
+                    seen.add(nm)
+                    wanted.append(music / nm)
+            files = wanted
+        else:
+            files = sorted(music.glob("*.flac"))
         job.total = len(files)
         job.log.append(f"[audit] {len(files)} 个 .flac，逐个四项门检查…")
         try:
@@ -334,7 +366,7 @@ class Runner:
                 passed += 1
             job.done += 1
         job.audit = {"total": job.total, "pass": passed, "fail": failed,
-                     "by_issue": by_issue, "files": files_out}
+                     "by_issue": by_issue, "files": files_out, "music_dir": str(music)}
         job.log.append(f"[audit] 完成：通过 {passed}，不合格 {failed}（明细见审计页）")
         # 持久化最近一次审计结果：服务重启后审计页仍能回显
         try:
@@ -369,24 +401,142 @@ def _library_counts(music_dir: str) -> dict:
     return {"total": total, **counts}
 
 
-def _read_tracks(path: str, include_existing: bool, only: list | None) -> tuple[list, int]:
-    """读 prepare 产出的 tracks.json，返回 (目标曲目列表, 目标数)。"""
+def _kill_proc_tree(proc: subprocess.Popen) -> None:
+    """终止子进程及其派生进程（Windows 下避免 yt-dlp / ffmpeg 残留）。"""
+    if os.name == "nt" and proc.pid:
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
+        except Exception:
+            pass
+    try:
+        if proc.poll() is None:
+            proc.kill()
+    except Exception:
+        pass
+
+
+def _resolve_tracks_path(path: str) -> Path:
+    """校验 tracks.json 位于仓库目录内，防前缀/大小写/兄弟目录绕过。"""
+    if not path:
+        raise ValueError("tracks.json 路径为空")
     p = Path(path)
     if not p.is_absolute():
         p = REPO / p
     p = p.resolve()
-    if not (str(p).startswith(str(REPO)) and p.name == "tracks.json" and p.exists()):
+    if not (p.is_relative_to(REPO) and p.name == "tracks.json" and p.is_file()):
         raise ValueError("tracks.json 路径不合法")
+    return p
+
+
+def _read_tracks(path: str, include_existing: bool, only: list | None) -> tuple[list, int]:
+    """读 prepare 产出的 tracks.json，返回 (目标曲目列表, 目标数)。"""
+    p = _resolve_tracks_path(path)
     d = json.loads(p.read_text(encoding="utf-8"))
     records = d if isinstance(d, list) else d.get("records") or []
     targets = [r for r in records if isinstance(r, dict)]
-    if only:
-        wanted = {str(x) for x in only}
-        targets = [r for r in targets
-                   if str(r.get("uri") or "").split(":")[-1] in wanted]
+    if only is not None:
+        wanted = {str(x).strip() for x in only if str(x).strip()}
+
+        def _match(r: dict) -> bool:
+            uri = str(r.get("uri") or "")
+            tail = uri.split(":")[-1] if uri else ""
+            name = str(r.get("name") or "")
+            pos = f"pos:{r.get('position')}"
+            return bool(
+                (uri and uri in wanted)
+                or (tail and tail in wanted)
+                or (name and name in wanted)
+                or (pos in wanted)
+            )
+
+        targets = [r for r in targets if _match(r)]
     if not include_existing:
         targets = [r for r in targets if not r.get("existing")]
     return targets, len(targets)
+
+
+_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_MAX_BODY_BYTES = 4 * 1024 * 1024
+
+
+class _LocalServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+
+
+def _list_dirs(raw_path: str, fallback: str) -> dict:
+    """列出本地磁盘盘符与指定目录下的子文件夹，供网页目录选择器浏览。"""
+    drives: list[str] = []
+    if os.name == "nt":
+        for ch in "CDEFGHIJKLMNOPQRSTUVWXYZAB":
+            d = f"{ch}:\\"
+            if os.path.isdir(d):
+                drives.append(d)
+    p = Path(raw_path.strip() or fallback or str(REPO)).expanduser()
+    try:
+        p = p.resolve()
+    except OSError:
+        p = REPO
+    while not p.is_dir() and p.parent != p:
+        p = p.parent
+    if not p.is_dir():
+        p = REPO
+    dirs: list[dict[str, str]] = []
+    try:
+        for entry in sorted(p.iterdir(), key=lambda x: x.name.lower()):
+            if entry.is_dir() and not entry.name.startswith("."):
+                dirs.append({"name": entry.name, "path": str(entry)})
+                if len(dirs) >= 200:
+                    break
+    except OSError:
+        pass
+    parent = str(p.parent) if p.parent != p else ""
+    return {"current": str(p), "parent": parent, "drives": drives, "dirs": dirs}
+
+
+def _save_default_music_dir(new_dir: str) -> str:
+    """校验并持久化默认曲库目录到 config.toml [paths].music。"""
+    import re
+
+    p = Path(new_dir.strip()).expanduser()
+    if not p.is_dir():
+        raise ValueError(f"曲库目录不存在或不是文件夹: {p}")
+    resolved = str(p.resolve())
+    cfg_path = REPO / "config.toml"
+    escaped = resolved.replace("\\", "\\\\").replace('"', '\\"')
+    new_line = f'music = "{escaped}"'
+    if cfg_path.exists():
+        lines = cfg_path.read_text(encoding="utf-8").splitlines()
+        out_lines = []
+        in_paths = False
+        replaced = False
+        inserted_section = False
+        for ln in lines:
+            stripped = ln.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                if in_paths and not replaced:
+                    out_lines.append(new_line)
+                    replaced = True
+                in_paths = stripped == "[paths]"
+                if in_paths:
+                    inserted_section = True
+            elif in_paths and re.match(r'^music\s*=', stripped):
+                ln = new_line
+                replaced = True
+            out_lines.append(ln)
+        if in_paths and not replaced:
+            out_lines.append(new_line)
+            replaced = True
+        if not inserted_section and not replaced:
+            out_lines.extend(["", "[paths]", new_line])
+        cfg_path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+    else:
+        cfg_path.write_text(f"[paths]\n{new_line}\n", encoding="utf-8")
+    return resolved
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -400,29 +550,68 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
         self.send_header("Pragma", "no-cache")
 
+    def _security_headers(self) -> None:
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+
+    def _is_local_request(self, check_origin: bool = False) -> bool:
+        host = (self.headers.get("Host") or "").strip()
+        if host:
+            parsed_host = urlparse(f"http://{host}").hostname
+            if parsed_host not in _LOCAL_HOSTS:
+                return False
+        if check_origin:
+            fetch_site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+            if fetch_site == "cross-site":
+                return False
+            origin = (self.headers.get("Origin") or "").strip()
+            if origin:
+                if origin == "null":
+                    return False
+                parsed = urlparse(origin)
+                if parsed.scheme not in ("http", "https") or parsed.hostname not in _LOCAL_HOSTS:
+                    return False
+        return True
+
     def _json(self, obj, code: int = 200) -> None:
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self._no_cache()
+        self._security_headers()
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
     def _body(self) -> dict:
-        n = int(self.headers.get("Content-Length") or 0)
+        raw_len = self.headers.get("Content-Length")
+        if raw_len is None or raw_len == "":
+            return {}
+        try:
+            n = int(raw_len)
+        except ValueError as exc:
+            raise ValueError("Content-Length 非法") from exc
+        if n < 0 or n > _MAX_BODY_BYTES:
+            raise ValueError("请求体大小超出限制")
         raw = self.rfile.read(n) if n else b"{}"
         try:
-            return json.loads(raw.decode("utf-8"))
+            data = json.loads(raw.decode("utf-8"))
         except Exception:
             return {}
+        return data if isinstance(data, dict) else {}
 
     def do_GET(self):  # noqa: N802
+        if not self._is_local_request(check_origin=False):
+            self._json({"error": "forbidden"}, 403)
+            return
         if self.path == "/" or self.path.startswith("/index"):
             body = PAGE_HTML.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self._no_cache()
+            self._security_headers()
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -431,6 +620,7 @@ class Handler(BaseHTTPRequestHandler):
                 jobs = [self.runner.jobs[i].snapshot()
                         for i in reversed(self.runner.order)]
             self._json({"library": _library_counts(self.runner.cfg.paths.music),
+                        "music_dir": str(self.runner.cfg.paths.music),
                         "jobs": jobs})
         elif self.path.startswith("/api/job/"):
             jid = self.path.rsplit("/", 1)[-1]
@@ -439,6 +629,35 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "no such job"}, 404)
                 return
             self._json(job.snapshot(with_log=True))
+        elif self.path.startswith("/api/audit/files"):
+            qs = parse_qs(urlparse(self.path).query)
+            raw_dir = (qs.get("dir", [""])[0] or "").strip()
+            mdir = Path(raw_dir or str(self.runner.cfg.paths.music)).expanduser()
+            if not mdir.is_dir():
+                self._json({"error": f"目录不存在: {mdir}"}, 400)
+                return
+            flist = sorted(f.name for f in mdir.glob("*.flac"))
+            self._json({"music_dir": str(mdir), "files": flist})
+        elif self.path.startswith("/api/upgrade/files"):
+            qs = parse_qs(urlparse(self.path).query)
+            raw_dir = (qs.get("dir", [""])[0] or "").strip()
+            ext = (qs.get("ext", ["all"])[0] or "all").lower()
+            mdir = Path(raw_dir or str(self.runner.cfg.paths.music)).expanduser()
+            if not mdir.is_dir():
+                self._json({"error": f"目录不存在: {mdir}"}, 400)
+                return
+            exts = {
+                "mp3": (".mp3",),
+                "ogg": (".ogg",),
+                "all": (".mp3", ".ogg"),
+                "flac": (".flac",),
+            }.get(ext, (".mp3", ".ogg"))
+            items = [
+                {"name": f.name, "ext": f.suffix.lower().lstrip(".")}
+                for f in sorted(mdir.iterdir(), key=lambda x: x.name.lower())
+                if f.is_file() and f.suffix.lower() in exts
+            ]
+            self._json({"music_dir": str(mdir), "files": items})
         elif self.path == "/api/audit/last":
             p = REPO / "tasks" / "gui" / "last_audit.json"
             if p.exists():
@@ -447,18 +666,16 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as e:
                     self._json({"error": str(e)}, 500)
             else:
-                self._json({"error": "还没有审计记录"}, 404)
+                self._json({"audit": None})
+        elif self.path.startswith("/api/dirs"):
+            qs = parse_qs(urlparse(self.path).query)
+            raw_p = qs.get("path", [""])[0]
+            self._json(_list_dirs(raw_p, str(self.runner.cfg.paths.music)))
         elif self.path.startswith("/api/tracks"):
-            from urllib.parse import parse_qs, urlparse
             qs = parse_qs(urlparse(self.path).query)
             path = (qs.get("path") or [""])[0]
             try:
-                p = Path(path)
-                if not p.is_absolute():
-                    p = REPO / p
-                p = p.resolve()
-                if not (str(p).startswith(str(REPO)) and p.name == "tracks.json" and p.exists()):
-                    raise ValueError("路径不合法")
+                p = _resolve_tracks_path(path)
                 d = json.loads(p.read_text(encoding="utf-8"))
                 records = d if isinstance(d, list) else d.get("records") or []
                 slim = [{"position": r.get("position"), "name": r.get("name"),
@@ -473,11 +690,17 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
     def do_POST(self):  # noqa: N802
-        body = self._body()
+        if not self._is_local_request(check_origin=True):
+            self._json({"error": "forbidden"}, 403)
+            return
         r = self.runner
         try:
+            body = self._body()
             if self.path == "/api/prepare":
                 out = REPO / "tasks" / "gui" / time.strftime("%Y%m%d_%H%M%S") / "tracks.json"
+                prep_dir = str(body.get("music_dir") or "").strip()
+                if "\x00" in prep_dir:
+                    raise ValueError("查重目录路径非法")
                 if body.get("uri"):
                     cmd = [PY, "-X", "utf8", "cli.py", "prepare",
                            "--uri", str(body["uri"]), "--out", str(out)]
@@ -489,19 +712,33 @@ class Handler(BaseHTTPRequestHandler):
                            "--list", str(lst), "--out", str(out)]
                 else:
                     raise ValueError("需要 uri 或 list_text")
+                if prep_dir:
+                    cmd.extend(["--music-dir", str(Path(prep_dir).expanduser())])
                 job = r.submit("prepare", cmd, tracks_path=str(out))
                 self._json(job)
             elif self.path == "/api/download":
                 tracks = str(body.get("tracks") or "")
+                raw_only = body.get("only")
+                only = None if raw_only is None else list(raw_only)
+                music_dir = str(body.get("music_dir") or "").strip()
+                if "\x00" in music_dir:
+                    raise ValueError("下载目录路径非法")
+                if music_dir:
+                    md = Path(music_dir).expanduser()
+                    if md.exists() and not md.is_dir():
+                        raise ValueError("下载目录已存在且不是文件夹")
+                    music_dir = str(md)
                 targets, total = _read_tracks(
-                    tracks, bool(body.get("include_existing")),
-                    body.get("only") or None)
+                    tracks, bool(body.get("include_existing")), only)
                 if total == 0:
                     raise ValueError("没有可下载的目标（全部已存在或选择为空）")
                 job = r.submit("download", None, total=total, tracks_path=tracks,
                                tracks_list=targets,
                                source=str(body.get("source") or "auto"),
-                               include_existing=bool(body.get("include_existing")))
+                               include_existing=bool(body.get("include_existing")),
+                               music_dir=music_dir,
+                               download_cover=bool(body.get("download_cover", True)),
+                               download_lyrics=bool(body.get("download_lyrics", True)))
                 self._json(job)
             elif self.path == "/api/upgrade":
                 ext = str(body.get("ext") or "mp3")
@@ -510,7 +747,21 @@ class Handler(BaseHTTPRequestHandler):
                 cmd = [PY, "-X", "utf8", "cli.py", "upgrade", "--ext", ext]
                 if body.get("full_retry"):
                     cmd.append("--full-retry")
-                job = r.submit("upgrade", cmd)
+                up_dir = str(body.get("music_dir") or "").strip()
+                if "\x00" in up_dir:
+                    raise ValueError("曲库目录路径非法")
+                if up_dir:
+                    cmd.extend(["--music-dir", str(Path(up_dir).expanduser())])
+                raw_files = body.get("files")
+                if isinstance(raw_files, list):
+                    cleaned = [Path(str(x)).name for x in raw_files if str(x).strip()]
+                    if not cleaned:
+                        raise ValueError("待升级文件列表为空")
+                    fpath = REPO / "tasks" / "gui" / f"upgrade_files_{uuid.uuid4().hex[:8]}.json"
+                    fpath.parent.mkdir(parents=True, exist_ok=True)
+                    fpath.write_text(json.dumps(cleaned, ensure_ascii=False), encoding="utf-8")
+                    cmd.extend(["--files", str(fpath)])
+                job = r.submit("upgrade", cmd, music_dir=up_dir)
                 self._json(job)
             elif self.path.endswith("/pause") and self.path.startswith("/api/job/"):
                 jid = self.path.split("/")[3]
@@ -527,8 +778,22 @@ class Handler(BaseHTTPRequestHandler):
                 job.skip_requested = True
                 self._json(job.snapshot())
             elif self.path == "/api/audit":
-                job = r.submit("audit", None)  # 服务内直跑，不走子进程
+                aud_dir = str(body.get("music_dir") or "").strip()
+                if "\x00" in aud_dir:
+                    raise ValueError("审计目录路径非法")
+                raw_files = body.get("files")
+                aud_files = None
+                if isinstance(raw_files, list):
+                    aud_files = [Path(str(x)).name for x in raw_files if str(x).strip()]
+                job = r.submit("audit", None, music_dir=aud_dir, audit_files=aud_files)  # 服务内直跑，不走子进程
                 self._json(job)
+            elif self.path == "/api/config/music-dir":
+                raw_dir = str(body.get("music_dir") or "").strip()
+                if not raw_dir or "\x00" in raw_dir:
+                    raise ValueError("请提供有效的默认曲库文件夹路径")
+                saved = _save_default_music_dir(raw_dir)
+                r.cfg.paths.music = saved
+                self._json({"music_dir": saved, "library": _library_counts(saved)})
             else:
                 self._json({"error": "not found"}, 404)
         except Exception as e:  # noqa: BLE001
@@ -548,7 +813,7 @@ def main(argv=None) -> int:
         pass
 
     H.runner = Runner(cfg)
-    srv = ThreadingHTTPServer(("127.0.0.1", args.port), H)
+    srv = _LocalServer(("127.0.0.1", args.port), H)
     print(f"flac-hunter GUI → {url}（曲库 {cfg.paths.music}，Ctrl+C 退出）", flush=True)
     if not args.no_browser:
         threading.Timer(0.6, webbrowser.open, [url]).start()

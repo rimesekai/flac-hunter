@@ -1469,6 +1469,202 @@ def check_z10_pertrack():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ---------- z11. GUI 修复回归：路径越界 / only 筛选 / audit 错误退出码 / 前端契约 ----------
+
+
+@check("z11. gui 修复回归：路径越界防绕过、only 筛选、audit 失败退出码")
+def check_z11_gui_fixes():
+    import gui as _gui
+    from flac_hunter.config import load_config
+    from flac_hunter.gui_page import PAGE_HTML
+
+    # 1) _resolve_tracks_path：同前缀兄弟目录（如 flac-hunter-evil）与非 tracks.json 必须被拒绝
+    evil_sibling = str(_gui.REPO.parent / (_gui.REPO.name + "-evil") / "tracks.json")
+    for bad in (evil_sibling, str(_gui.REPO / "output" / "other.json"), ""):
+        try:
+            _gui._resolve_tracks_path(bad)
+            raise AssertionError(f"应当拒绝非法 tracks 路径: {bad!r}")
+        except ValueError:
+            pass
+
+    # 2) _read_tracks：支持完整 spotify:track:xxx、尾部 id、纯文本歌单 pos:<n>，且 only=[] 返回 0 首
+    tmp = Path(tempfile.mkdtemp(prefix="fh_z11_"))
+    orig_repo = _gui.REPO
+    try:
+        _gui.REPO = tmp
+        tj = tmp / "tasks" / "tracks.json"
+        tj.parent.mkdir(parents=True, exist_ok=True)
+        tj.write_text(json.dumps({
+            "records": [
+                {"position": 1, "name": "SongA", "uri": "spotify:track:AAA111", "existing": None},
+                {"position": 2, "name": "SongB", "uri": "spotify:track:BBB222", "existing": "b.mp3"},
+                {"position": 3, "name": "LocalOnly,Song", "uri": None, "existing": None},
+            ]
+        }), encoding="utf-8")
+
+        items_empty, tot_empty = _gui._read_tracks(str(tj), True, [])
+        assert items_empty == [] and tot_empty == 0, f"only=[] 应返回空: {items_empty}"
+
+        items_uri, tot_uri = _gui._read_tracks(str(tj), True, ["spotify:track:AAA111"])
+        assert [x["name"] for x in items_uri] == ["SongA"] and tot_uri == 1
+
+        items_id, _ = _gui._read_tracks(str(tj), False, ["BBB222"])
+        assert items_id == [], "include_existing=False 应跳过已有曲目"
+
+        items_pos, _ = _gui._read_tracks(str(tj), True, ["pos:3"])
+        assert [x["name"] for x in items_pos] == ["LocalOnly,Song"], f"--list pos 匹配失败: {items_pos}"
+
+        # 3) _run_audit 在曲库目录不存在时必须保持 status=error 与 exit_code=1
+        cfg = load_config()
+        cfg.paths.music = tmp / "nonexistent_music_dir"
+        cfg.paths.tasks = tmp / "tasks"
+        cfg.paths.output = tmp / "output"
+        r = _gui.Runner(cfg)
+        snap = r.submit("audit", None)
+        job = r.jobs[snap["id"]]
+        deadline = time.time() + 5.0
+        while job.status in ("queued", "running") and time.time() < deadline:
+            time.sleep(0.03)
+        assert job.status == "error" and job.exit_code == 1, (
+            f"audit 缺目录应报错并保留 exit_code=1，实际: status={job.status}, exit_code={job.exit_code}"
+        )
+    finally:
+        _gui.REPO = orig_repo
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # 4) FlClash 设计系统关键标记与前端交互修复
+    for marker in ("--fc-surface-card", "--fc-surface-chrome", "btn-selnew", 'existing !== "1"', "请至少勾选一首曲目再下载", 'id="dl-dir"'):
+        assert marker in PAGE_HTML, f"PAGE_HTML 缺失关键设计或修复标记: {marker}"
+
+    # 5) Runner._download_cmd 自定义下载目录参数透传
+    j_dir = _gui.Job("jdir", "download", None, Path("."), tracks_path="t.json", music_dir="/tmp/my_flac")
+    cmd_dir = _gui.Runner(load_config())._download_cmd(j_dir, "k1")
+    assert "--music-dir" in cmd_dir and "/tmp/my_flac" in cmd_dir, f"未透传 --music-dir: {cmd_dir}"
+
+
+# ---------- z12. GUI HTTP 安全加固与 API 集成测试 ----------
+
+
+@check("z12. gui HTTP 本地隔离、安全头、/api/audit/last 与部分下载")
+def check_z12_gui_http_security():
+    import threading
+    import urllib.request
+    import urllib.error
+    import gui as _gui
+    from flac_hunter.config import load_config
+
+    tmp = Path(tempfile.mkdtemp(prefix="fh_z12_"))
+    orig_repo = _gui.REPO
+    srv = None
+    try:
+        _gui.REPO = tmp
+        (tmp / "tasks").mkdir(parents=True, exist_ok=True)
+        (tmp / "output").mkdir(parents=True, exist_ok=True)
+        (tmp / "music").mkdir(parents=True, exist_ok=True)
+        tj = tmp / "tasks" / "tracks.json"
+        tj.write_text(json.dumps({
+            "records": [
+                {"position": 1, "name": "T1", "uri": "spotify:track:T1ID", "existing": None},
+                {"position": 2, "name": "T2", "uri": "spotify:track:T2ID", "existing": None},
+            ]
+        }), encoding="utf-8")
+
+        cfg = load_config()
+        cfg.paths.music = tmp / "music"
+        cfg.paths.tasks = tmp / "tasks"
+        cfg.paths.output = tmp / "output"
+        runner = _gui.Runner(cfg)
+        runner._download_cmd = lambda j, k: [sys.executable, "-c", f"print('z12-dl:{k}')"]
+
+        class TestHandler(_gui.Handler):
+            pass
+        TestHandler.runner = runner
+        srv = _gui._LocalServer(("127.0.0.1", 0), TestHandler)
+        port = srv.server_address[1]
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        base = f"http://127.0.0.1:{port}"
+
+        # 1) GET / 返回 200 与安全响应头
+        with urllib.request.urlopen(base + "/") as resp:
+            assert resp.status == 200
+            assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+            assert resp.headers.get("X-Frame-Options") == "DENY"
+            assert resp.headers.get("Cross-Origin-Resource-Policy") == "same-origin"
+
+        # 2) GET /api/audit/last 无缓存时返回 200 {"audit": None}，避免控制台 404
+        with urllib.request.urlopen(base + "/api/audit/last") as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            assert resp.status == 200 and data == {"audit": None}, f"audit/last 异常: {data}"
+
+        # 3) GET /api/state 包含 music_dir
+        with urllib.request.urlopen(base + "/api/state") as resp:
+            st = json.loads(resp.read().decode("utf-8"))
+            assert st.get("music_dir") == str(cfg.paths.music)
+
+        # 4) 跨站 POST（Origin 或 Sec-Fetch-Site: cross-site）必须被 403 拦截
+        for bad_hdrs in (
+            {"Origin": "https://evil.example", "Content-Type": "application/json"},
+            {"Sec-Fetch-Site": "cross-site", "Content-Type": "application/json"},
+        ):
+            req = urllib.request.Request(
+                base + "/api/audit", data=b"{}", headers=bad_hdrs, method="POST",
+            )
+            try:
+                urllib.request.urlopen(req)
+                raise AssertionError(f"跨站请求应当被拦截: {bad_hdrs}")
+            except urllib.error.HTTPError as e:
+                assert e.code == 403, f"跨站请求应返回 403，实际: {e.code}"
+
+        # 5) 合法同源 POST /api/download（部分勾选 + 自定义下载目录）应仅执行选中曲目并记录目标目录
+        custom_dir = tmp / "custom_out"
+        req = urllib.request.Request(
+            base + "/api/download",
+            data=json.dumps({
+                "tracks": str(tj),
+                "only": ["spotify:track:T2ID"],
+                "include_existing": True,
+                "music_dir": str(custom_dir),
+            }).encode("utf-8"),
+            headers={"Origin": base, "Sec-Fetch-Site": "same-origin", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as resp:
+            snap = json.loads(resp.read().decode("utf-8"))
+        assert snap["total"] == 1, f"部分选中应只下载 1 首，实际: {snap}"
+        assert snap.get("music_dir") == str(custom_dir), f"music_dir 未透传: {snap}"
+        job = runner.jobs[snap["id"]]
+        deadline = time.time() + 8.0
+        while job.status in ("queued", "running") and time.time() < deadline:
+            time.sleep(0.05)
+        assert job.status == "done", f"部分下载失败: {list(job.log)}"
+        assert any("z12-dl:T2ID" in line for line in job.log)
+        assert not any("z12-dl:T1ID" in line for line in job.log)
+    finally:
+        if srv is not None:
+            srv.shutdown()
+            srv.server_close()
+        _gui.REPO = orig_repo
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@check("z13: 下载封面/歌词开关 + 升级补封面修复回归")
+def check_z13_cover_lyrics_and_upgrade_repair():
+    from flac_hunter.gui_page import PAGE_HTML
+    import cli as _cli
+    import flac_hunter.upgrade as _upg
+
+    assert 'id="dl-cover"' in PAGE_HTML and 'id="dl-lyrics"' in PAGE_HTML
+    assert "download_cover" in PAGE_HTML and "download_lyrics" in PAGE_HTML
+    assert hasattr(_upg, "json") and callable(getattr(_upg, "_repair_existing_flac", None))
+
+    parser = _cli.build_parser()
+    ns = parser.parse_args(["download", "--tracks", "t.json", "--no-cover", "--no-lyrics"])
+    assert ns.no_cover is True and ns.no_lyrics is True
+
+
 # ---------- 主流程 ----------
 
 
