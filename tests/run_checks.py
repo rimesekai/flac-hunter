@@ -1686,6 +1686,23 @@ def check_z13_cover_lyrics_and_upgrade_repair():
         assert "from_search" in PAGE_HTML and hasattr(_gui.Runner, "_run_prepare_list_search")
         parsed_rows = _gui.Runner._parse_list_lines("快晴\n夜に駆ける - YOASOBI\n")
         assert len(parsed_rows) == 2 and parsed_rows[0]["artists"] == [] and parsed_rows[1]["artists"] == ["YOASOBI"]
+        import flac_hunter.upgrade as _up_mod
+        orig_ns = _up_mod._netease_search
+        _up_mod._netease_search = lambda q, cfg=None: [
+            {"id": "502455387", "name": "快晴", "artists": "Orangestar, 初音ミク", "dur": 264.3},
+            {"id": "2070408389", "name": "快晴", "artists": "Orangestar, IA", "dur": 263.5},
+        ]
+        try:
+            r_prep = _gui.Runner(_gui.load_config())
+            out_tj = td / "out_tracks.json"
+            j_prep = _gui.Job("jp", "prepare", None, Path("."), tracks_path=str(out_tj),
+                              music_dir=str(td), list_text="快晴\n")
+            r_prep._run_prepare_list_search(j_prep)
+            import json as _json
+            recs = _json.loads(out_tj.read_text(encoding="utf-8"))
+            assert len(recs) == 2 and all(x.get("from_search") for x in recs)
+        finally:
+            _up_mod._netease_search = orig_ns
     finally:
         shutil.rmtree(td, ignore_errors=True)
 

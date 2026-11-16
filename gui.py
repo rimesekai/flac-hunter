@@ -342,7 +342,8 @@ class Runner:
 
     def _run_prepare_list_search(self, job: Job) -> None:
         """文本清单含无歌手行时，自动联网搜索多个版本候选并与目标曲库三层查重。"""
-        from flac_hunter.library import LibraryIndex, dedupe_track
+        from flac_hunter.library import LibraryIndex
+        from flac_hunter.match.normalize import sanitize
         from flac_hunter.upgrade import _netease_search
 
         cfg = self.cfg
@@ -386,24 +387,31 @@ class Runner:
                 })
             job.log.append(f"[prepare] 「{name}」展开为 {min(len(cands), 8)} 个候选版本")
 
-        idx = LibraryIndex.scan(str(music), cfg=cfg) if music.is_dir() else LibraryIndex([])
+        idx = LibraryIndex(str(music), cfg)
+        if music.is_dir():
+            idx.scan()
         records: list[dict] = []
         for pos, t in enumerate(expanded, 1):
+            artists = [str(a) for a in (t.get("artists") or [])]
+            name_clean = sanitize(str(t.get("name") or ""))
+            artist_parts = [sanitize(a) for a in artists if str(a).strip()]
+            artist_parts = [a for a in artist_parts if a]
             rec = {
                 "type": t.get("type") or "list",
                 "uri": t.get("uri"),
                 "name": str(t.get("name") or ""),
-                "artists": [str(a) for a in (t.get("artists") or [])],
+                "artists": artists,
                 "album": t.get("album"),
                 "position": pos,
                 "duration_ms": t.get("duration_ms"),
                 "image_url": t.get("image_url"),
+                "filename_stem": f"{name_clean} - {' _ '.join(artist_parts)}" if artist_parts else name_clean,
                 "from_search": bool(t.get("from_search")),
                 "existing": False,
                 "existing_file": None,
                 "dedupe_reason": None,
             }
-            res = dedupe_track(rec, idx, cfg=cfg)
+            res = idx.dedupe_track(rec) if music.is_dir() else None
             entry, reason = (res[0], res[1]) if isinstance(res, tuple) else (None, None)
             if isinstance(entry, dict):
                 entry = entry.get("path") or entry.get("file")
